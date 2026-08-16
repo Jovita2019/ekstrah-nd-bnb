@@ -43,7 +43,7 @@ const Logo = () => (
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [bookings, setBookings] = useState([]);
+  const [bookings, setbookings] = useState([]);
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("list");
   const [editing, setEditing] = useState(false);
@@ -61,18 +61,18 @@ export default function App() {
   };
 
   // Load bookings from Supabase
-  const loadBookings = async () => {
+  const loadbookings = async () => {
     setLoading(true);
     const { data: bData } = await supabase
-      .from("Bookings")
+      .from("bookings")
       .select("*, bed_plans(*), status_reports(*)")
       .order("check_in", { ascending: true });
-    if (bData) setBookings(bData);
+    if (bData) setbookings(bData);
     setLoading(false);
   };
 
   useEffect(() => {
-    if (user) loadBookings();
+    if (user) loadbookings();
   }, [user]);
 
   // Realtime subscription
@@ -81,7 +81,7 @@ export default function App() {
     const channel = supabase
       .channel("db-changes")
       .on("postgres_changes", { event: "*", schema: "public" }, () => {
-        loadBookings();
+        loadbookings();
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -118,7 +118,7 @@ export default function App() {
         baby_bed: editData._baby,
       });
     }
-    await supabase.from("Bookings").update({ obs: editData.obs }).eq("id", editData.id);
+    await supabase.from("bookings").update({ obs: editData.obs }).eq("id", editData.id);
     await sendNotification(
       "booking_updated",
       editData,
@@ -126,7 +126,7 @@ export default function App() {
     );
     setEditing(false);
     showToast("✅ Lagret og Jovita varslet på e-post!");
-    loadBookings();
+    loadbookings();
     setLoading(false);
   };
 
@@ -145,7 +145,7 @@ export default function App() {
     );
     setStatusNote("");
     showToast("📤 Status sendt til Thomas!");
-    loadBookings();
+    loadbookings();
     setLoading(false);
   };
 
