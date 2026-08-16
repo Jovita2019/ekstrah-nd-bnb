@@ -118,7 +118,7 @@ export default function App() {
         baby_bed: editData._baby,
       });
     }
-    await supabase.from("Bookings").update({ obs: editData.obs }).eq("id", editData.id);
+    await supabase.from(bookings).update({ obs: editData.obs }).eq("id", editData.id);
     await sendNotification(
       "booking_updated",
       editData,
