@@ -64,7 +64,7 @@ export default function App() {
   const loadBookings = async () => {
     setLoading(true);
     const { data: bData } = await supabase
-      .from("Bookings")
+      .from("bookings")
       .select("*, bed_plans(*), status_reports(*)")
       .order("check_in", { ascending: true });
     if (bData) setBookings(bData);
