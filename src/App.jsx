@@ -2,8 +2,8 @@ import { useState, useEffect } from "react";
 import { supabase } from "./supabase.js";
 
 const USERS = {
-  thomas: { name: "Thomas", role: "host" },
-  jovita: { name: "Jovita", role: "cleaner" },
+  thomas: { name: "Thomas", role: "host", password: "hovden2026" },
+  jovita: { name: "Jovita", role: "cleaner", password: "ekstrahand2026" },
 };
 
 const formatDate = (d) => {
@@ -43,7 +43,7 @@ const Logo = () => (
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [Bookings, setBookings] = useState([]);
+  const [bookings, setBookings] = useState([]);
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("list");
   const [editing, setEditing] = useState(false);
@@ -52,20 +52,35 @@ export default function App() {
   const [statusType, setStatusType] = useState("ok");
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [loginRole, setLoginRole] = useState(null);
+  const [password, setPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
 
-  const booking = Bookings.find((b) => b.id === selected);
+  const handleLogin = (role) => {
+    const u = USERS[role];
+    if (password === u.password) {
+      setUser(u);
+      setPassword("");
+      setLoginError("");
+      setLoginRole(null);
+    } else {
+      setLoginError("Feil passord, prøv igjen.");
+    }
+  };
+
+  const booking = bookings.find((b) => b.id === selected);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load Bookings from Supabase
+  // Load bookings from Supabase
   const loadBookings = async () => {
     setLoading(true);
     const { data: bData } = await supabase
-      .from("bookings")
-      .select("*, bed_plans(*), status_reports(*)")
+      .from("Bookings")
+      .select("*")
       .order("check_in", { ascending: true });
     if (bData) setBookings(bData);
     setLoading(false);
@@ -118,7 +133,7 @@ export default function App() {
         baby_bed: editData._baby,
       });
     }
-    await supabase.from(bookings).update({ obs: editData.obs }).eq("id", editData.id);
+    await supabase.from("Bookings").update({ obs: editData.obs }).eq("id", editData.id);
     await sendNotification(
       "booking_updated",
       editData,
@@ -166,9 +181,31 @@ export default function App() {
       <div style={styles.loginWrap}>
         <div style={styles.loginBox}>
           <Logo />
-          <p style={styles.loginLabel}>Logg inn som</p>
-          <button style={styles.btnHost} onClick={() => setUser(USERS.thomas)}>🏠 Thomas (Utleier)</button>
-          <button style={styles.btnCleaner} onClick={() => setUser(USERS.jovita)}>🧹 Jovita (Vasker)</button>
+          {!loginRole ? (
+            <>
+              <p style={styles.loginLabel}>Logg inn som</p>
+              <button style={styles.btnHost} onClick={() => { setLoginRole("thomas"); setPassword(""); setLoginError(""); }}>🏠 Thomas (Utleier)</button>
+              <button style={styles.btnCleaner} onClick={() => { setLoginRole("jovita"); setPassword(""); setLoginError(""); }}>🧹 Jovita (Vasker)</button>
+            </>
+          ) : (
+            <>
+              <p style={styles.loginLabel}>Passord for {loginRole === "thomas" ? "Thomas" : "Jovita"}</p>
+              <input
+                style={{ ...styles.input, marginBottom: 8 }}
+                type="password"
+                placeholder="Skriv passord..."
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && handleLogin(loginRole)}
+                autoFocus
+              />
+              {loginError && <p style={{ color: "#e53e3e", fontSize: 13, margin: "0 0 8px" }}>{loginError}</p>}
+              <button style={loginRole === "thomas" ? styles.btnHost : styles.btnCleaner} onClick={() => handleLogin(loginRole)}>
+                Logg inn
+              </button>
+              <button style={{ ...styles.btnCancel, marginTop: 8 }} onClick={() => setLoginRole(null)}>← Tilbake</button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -316,13 +353,13 @@ export default function App() {
       <div style={styles.listWrap}>
         <div style={styles.listTitle}>Bookinger</div>
         {loading && <p style={{ color: "#718096", fontSize: 14 }}>Laster...</p>}
-        {Bookings.length === 0 && !loading && (
+        {bookings.length === 0 && !loading && (
           <div style={styles.empty}>
             <p>Ingen bookinger ennå.</p>
             {user.role === "host" && <p>Legg til bookinger i Supabase Table Editor.</p>}
           </div>
         )}
-        {Bookings.map((b) => {
+        {bookings.map((b) => {
           const sr = b.status_reports?.[0];
           return (
             <div key={b.id} style={styles.card} onClick={() => { setSelected(b.id); setView("detail"); }}>
