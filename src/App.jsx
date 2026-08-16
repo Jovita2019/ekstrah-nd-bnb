@@ -43,7 +43,7 @@ const Logo = () => (
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [bookings, setbookings] = useState([]);
+  const [Bookings, setBookings] = useState([]);
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("list");
   const [editing, setEditing] = useState(false);
@@ -53,26 +53,26 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
 
-  const booking = bookings.find((b) => b.id === selected);
+  const booking = Bookings.find((b) => b.id === selected);
 
   const showToast = (msg, type = "success") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load bookings from Supabase
-  const loadbookings = async () => {
+  // Load Bookings from Supabase
+  const loadBookings = async () => {
     setLoading(true);
     const { data: bData } = await supabase
-      .from("bookings")
+      .from("Bookings")
       .select("*, bed_plans(*), status_reports(*)")
       .order("check_in", { ascending: true });
-    if (bData) setbookings(bData);
+    if (bData) setBookings(bData);
     setLoading(false);
   };
 
   useEffect(() => {
-    if (user) loadbookings();
+    if (user) loadBookings();
   }, [user]);
 
   // Realtime subscription
@@ -81,7 +81,7 @@ export default function App() {
     const channel = supabase
       .channel("db-changes")
       .on("postgres_changes", { event: "*", schema: "public" }, () => {
-        loadbookings();
+        loadBookings();
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -118,7 +118,7 @@ export default function App() {
         baby_bed: editData._baby,
       });
     }
-    await supabase.from("bookings").update({ obs: editData.obs }).eq("id", editData.id);
+    await supabase.from("Bookings").update({ obs: editData.obs }).eq("id", editData.id);
     await sendNotification(
       "booking_updated",
       editData,
@@ -126,7 +126,7 @@ export default function App() {
     );
     setEditing(false);
     showToast("✅ Lagret og Jovita varslet på e-post!");
-    loadbookings();
+    loadBookings();
     setLoading(false);
   };
 
@@ -145,7 +145,7 @@ export default function App() {
     );
     setStatusNote("");
     showToast("📤 Status sendt til Thomas!");
-    loadbookings();
+    loadBookings();
     setLoading(false);
   };
 
@@ -316,13 +316,13 @@ export default function App() {
       <div style={styles.listWrap}>
         <div style={styles.listTitle}>Bookinger</div>
         {loading && <p style={{ color: "#718096", fontSize: 14 }}>Laster...</p>}
-        {bookings.length === 0 && !loading && (
+        {Bookings.length === 0 && !loading && (
           <div style={styles.empty}>
             <p>Ingen bookinger ennå.</p>
             {user.role === "host" && <p>Legg til bookinger i Supabase Table Editor.</p>}
           </div>
         )}
-        {bookings.map((b) => {
+        {Bookings.map((b) => {
           const sr = b.status_reports?.[0];
           return (
             <div key={b.id} style={styles.card} onClick={() => { setSelected(b.id); setView("detail"); }}>
