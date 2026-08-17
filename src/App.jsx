@@ -6,6 +6,10 @@ const USERS = {
   jovita: { name: "Jovita", role: "cleaner", password: "ekstrahand2026" },
 };
 
+const SUPPLY_STATES = ["ok", "low", "empty"];
+const SUPPLY_LABEL = { ok: "OK", low: "Lite igjen", empty: "Tom" };
+const nextSupplyStatus = (s) => SUPPLY_STATES[(SUPPLY_STATES.indexOf(s) + 1) % SUPPLY_STATES.length];
+
 const formatDate = (d) => {
   if (!d) return "";
   const date = new Date(d);
@@ -17,6 +21,13 @@ const StatusBadge = ({ status }) => {
   if (status === "ok") return <span style={styles.badgeOk}>✓ Alt bra</span>;
   if (status === "obs") return <span style={styles.badgeObs}>⚠ Obs</span>;
   return null;
+};
+
+const SupplyBadge = ({ status }) => {
+  if (status === "ok") return <span style={styles.badgeOk}>✓ OK</span>;
+  if (status === "low") return <span style={styles.badgeObs}>⚠ Lite igjen</span>;
+  if (status === "empty") return <span style={styles.badgeEmpty}>✕ Tom</span>;
+  return <span style={styles.badgeNone}>–</span>;
 };
 
 const Logo = () => (
@@ -44,6 +55,7 @@ const Logo = () => (
 export default function App() {
   const [user, setUser] = useState(null);
   const [bookings, setBookings] = useState([]);
+  const [supplies, setSupplies] = useState([]);
   const [selected, setSelected] = useState(null);
   const [view, setView] = useState("list");
   const [editing, setEditing] = useState(false);
@@ -75,19 +87,32 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Load bookings from Supabase
+  // Load bookings from Supabase — includes related bed_plans and status_reports
   const loadBookings = async () => {
     setLoading(true);
-    const { data: bData } = await supabase
+    const { data: bData, error } = await supabase
       .from("bookings")
-      .select("*")
+      .select("*, bed_plans(*), status_reports(*)")
       .order("check_in", { ascending: true });
+    if (error) console.error("loadBookings error:", error);
     if (bData) setBookings(bData);
     setLoading(false);
   };
 
+  // Load supplies from Supabase
+  const loadSupplies = async () => {
+    const { data: sData } = await supabase
+      .from("supplies")
+      .select("*")
+      .order("name", { ascending: true });
+    if (sData) setSupplies(sData);
+  };
+
   useEffect(() => {
-    if (user) loadBookings();
+    if (user) {
+      loadBookings();
+      loadSupplies();
+    }
   }, [user]);
 
   // Realtime subscription
@@ -97,6 +122,7 @@ export default function App() {
       .channel("db-changes")
       .on("postgres_changes", { event: "*", schema: "public" }, () => {
         loadBookings();
+        loadSupplies();
       })
       .subscribe();
     return () => supabase.removeChannel(channel);
@@ -112,6 +138,20 @@ export default function App() {
         checkIn: formatDate(b.check_in),
         checkOut: formatDate(b.check_out),
         message,
+      }),
+    });
+  };
+
+  const notifySupplyEmpty = async (item) => {
+    await fetch("/api/send-notification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "supply_empty",
+        guest: "",
+        checkIn: "",
+        checkOut: "",
+        message: `${item.name} er tom og trenger påfyll.`,
       }),
     });
   };
@@ -164,6 +204,22 @@ export default function App() {
     setLoading(false);
   };
 
+  const cycleSupply = async (item) => {
+    const newStatus = nextSupplyStatus(item.status);
+    // optimistic update
+    setSupplies((prev) => prev.map((s) => (s.id === item.id ? { ...s, status: newStatus } : s)));
+    await supabase
+      .from("supplies")
+      .update({ status: newStatus, updated_at: new Date().toISOString(), updated_by: user.name })
+      .eq("id", item.id);
+    if (newStatus === "empty") {
+      await notifySupplyEmpty(item);
+      showToast(`✕ ${item.name} markert som tom — Thomas varslet!`);
+    } else {
+      showToast(`Oppdatert: ${item.name} → ${SUPPLY_LABEL[newStatus]}`);
+    }
+  };
+
   const startEdit = (b) => {
     const bp = b.bed_plans?.[0] || {};
     setEditData({
@@ -206,6 +262,57 @@ export default function App() {
               <button style={{ ...styles.btnCancel, marginTop: 8 }} onClick={() => setLoginRole(null)}>← Tilbake</button>
             </>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // SUPPLIES VIEW
+  if (view === "supplies") {
+    return (
+      <div style={styles.wrap}>
+        {toast && <div style={{ ...styles.toast, background: toast.type === "success" ? "#00d68f" : "#fc8181" }}>{toast.msg}</div>}
+        <header style={styles.header}>
+          <button style={styles.back} onClick={() => setView("list")}>← Tilbake</button>
+          <span style={styles.headerName}>{user.name}</span>
+          <button style={styles.logout} onClick={() => { setUser(null); setView("list"); }}>Logg ut</button>
+        </header>
+
+        <div style={styles.listWrap}>
+          <div style={styles.listTitle}>🧴 Forsyninger</div>
+          <p style={{ fontSize: 12, color: "#718096", marginTop: -8, marginBottom: 14 }}>
+            Trykk på et element for å endre status: OK → Lite igjen → Tom
+          </p>
+          {supplies.length === 0 && (
+            <div style={styles.empty}>
+              <p>Ingen forsyninger registrert ennå.</p>
+              <p>Legg til i Supabase Table Editor (tabellen "supplies").</p>
+            </div>
+          )}
+          {supplies.map((item) => (
+            <div
+              key={item.id}
+              style={{
+                ...styles.card,
+                cursor: "pointer",
+                borderLeft: `4px solid ${item.status === "empty" ? "#e53e3e" : item.status === "low" ? "#d97706" : "#0f2540"}`,
+              }}
+              onClick={() => cycleSupply(item)}
+            >
+              <div style={styles.cardLeft}>
+                <div style={styles.cardGuest}>{item.name}</div>
+                {item.updated_by && (
+                  <div style={styles.cardMeta}>
+                    Sist oppdatert av {item.updated_by}
+                    {item.updated_at ? `, ${formatDate(item.updated_at)}` : ""}
+                  </div>
+                )}
+              </div>
+              <div style={styles.cardRight}>
+                <SupplyBadge status={item.status} />
+              </div>
+            </div>
+          ))}
         </div>
       </div>
     );
@@ -345,6 +452,7 @@ export default function App() {
       <header style={styles.header}>
         <span style={styles.headerTitle}>Hovden Hytteservice</span>
         <div style={styles.headerRight}>
+          <button style={styles.suppliesBtn} onClick={() => setView("supplies")}>🧴 Forsyninger</button>
           <span style={styles.headerName}>{user.name}</span>
           <button style={styles.logout} onClick={() => setUser(null)}>Logg ut</button>
         </div>
@@ -390,6 +498,7 @@ const styles = {
   headerName: { fontSize: 13, color: "#00d68f", fontWeight: 600 },
   back: { background: "none", border: "none", color: "#00d68f", fontSize: 14, cursor: "pointer", padding: 0 },
   logout: { background: "none", border: "1px solid #ffffff44", color: "#fff", fontSize: 12, borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
+  suppliesBtn: { background: "#00d68f22", border: "1px solid #00d68f", color: "#00d68f", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 600 },
   loginWrap: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" },
   loginBox: { background: "#fff", borderRadius: 16, padding: 36, textAlign: "center", boxShadow: "0 4px 24px #0002", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: 280 },
   loginLabel: { color: "#4a5568", fontSize: 14, margin: 0 },
@@ -422,6 +531,7 @@ const styles = {
   badgeNone: { fontSize: 11, background: "#e2e8f0", color: "#718096", borderRadius: 20, padding: "3px 10px", fontWeight: 600 },
   badgeOk: { fontSize: 11, background: "#c6f6d5", color: "#22543d", borderRadius: 20, padding: "3px 10px", fontWeight: 600 },
   badgeObs: { fontSize: 11, background: "#fefcbf", color: "#744210", borderRadius: 20, padding: "3px 10px", fontWeight: 600 },
+  badgeEmpty: { fontSize: 11, background: "#fed7d7", color: "#822727", borderRadius: 20, padding: "3px 10px", fontWeight: 600 },
   input: { width: "100%", padding: "10px 12px", border: "1px solid #e2e8f0", borderRadius: 8, fontSize: 14, marginBottom: 10, boxSizing: "border-box", fontFamily: "inherit" },
   label: { fontSize: 12, fontWeight: 600, color: "#4a5568", display: "block", marginBottom: 4 },
   btnSave: { width: "100%", padding: "12px 0", background: "#0f2540", color: "#fff", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", marginBottom: 8 },
