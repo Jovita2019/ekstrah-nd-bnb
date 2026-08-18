@@ -1,9 +1,13 @@
 export default async (req) => {
   const { type, guest, checkIn, checkOut, message } = await req.json()
   const RESEND_API_KEY = process.env.RESEND_API_KEY
+
   const JOVITA_EMAIL = 'jovitakakia@gmail.com'
   const THOMAS_EMAIL = 'thnyga@online.no'
-  let to, subject, html
+
+  // Added bcc to our list of variables
+  let to, bcc, subject, html
+
   if (type === 'booking_updated') {
     // Thomas updated instructions → notify Jovita
     to = JOVITA_EMAIL
@@ -27,8 +31,9 @@ export default async (req) => {
       </div>
     `
   } else if (type === 'status_report') {
-    // Jovita sent status → notify Thomas
+    // Jovita sent status → notify Thomas AND copy Jovita
     to = THOMAS_EMAIL
+    bcc = JOVITA_EMAIL 
     subject = `📊 Statusrapport fra Jovita – ${guest}`
     html = `
       <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
@@ -49,8 +54,9 @@ export default async (req) => {
       </div>
     `
   } else if (type === 'supply_empty') {
-    // A supply item ran out → notify Thomas
+    // A supply item ran out → notify Thomas AND copy Jovita
     to = THOMAS_EMAIL
+    bcc = JOVITA_EMAIL 
     subject = `🧴 Forsyning tom – trenger påfyll`
     html = `
       <div style="font-family: sans-serif; max-width: 500px; margin: 0 auto;">
@@ -69,20 +75,38 @@ export default async (req) => {
       </div>
     `
   }
+
+  // --- TEMPORARY TESTING OVERRIDE ---
+  // Because you are using onboarding@resend.dev, Resend will ONLY allow emails sent to jovitakakia@gmail.com. 
+  // Delete or comment out these next two lines ONLY AFTER you have verified a custom domain in Resend.
+  to = JOVITA_EMAIL
+  bcc = null 
+  // ----------------------------------
+
+  // Build the email payload
+  const emailPayload = {
+    from: 'Ekstrahånd <onboarding@resend.dev>', // Change this later when you have a verified domain
+    to: to,
+    subject: subject,
+    html: html
+  }
+
+  // Only add the BCC field if it has an email address assigned to it
+  if (bcc) {
+    emailPayload.bcc = bcc
+  }
+
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${RESEND_API_KEY}`,
       'Content-Type': 'application/json'
     },
-    body: JSON.stringify({
-      from: 'Ekstrahånd <onboarding@resend.dev>',
-      to,
-      subject,
-      html
-    })
+    body: JSON.stringify(emailPayload)
   })
+
   const data = await res.json()
   return new Response(JSON.stringify(data), { status: res.ok ? 200 : 500 })
 }
+
 export const config = { path: '/api/send-notification' }
