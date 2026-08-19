@@ -16,6 +16,11 @@ const formatDate = (d) => {
   return date.toLocaleDateString("no-NO", { day: "numeric", month: "short" });
 };
 
+const toISODate = (d) => {
+  if (!d) return "";
+  return d; // input[type=date] already gives YYYY-MM-DD
+};
+
 const StatusBadge = ({ status }) => {
   if (!status) return <span style={styles.badgeNone}>Ikke rapportert</span>;
   if (status === "ok") return <span style={styles.badgeOk}>✓ Alt bra</span>;
@@ -52,6 +57,18 @@ const Logo = () => (
   </svg>
 );
 
+const emptyNewBooking = {
+  guest: "",
+  country: "",
+  check_in: "",
+  check_out: "",
+  guests: 1,
+  obs: "",
+  _double: 0,
+  _single: 0,
+  _baby: false,
+};
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [bookings, setBookings] = useState([]);
@@ -60,6 +77,7 @@ export default function App() {
   const [view, setView] = useState("list");
   const [editing, setEditing] = useState(false);
   const [editData, setEditData] = useState(null);
+  const [newBooking, setNewBooking] = useState(emptyNewBooking);
   const [statusNote, setStatusNote] = useState("");
   const [statusType, setStatusType] = useState("ok");
   const [loading, setLoading] = useState(false);
@@ -67,6 +85,7 @@ export default function App() {
   const [loginRole, setLoginRole] = useState(null);
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [newBookingError, setNewBookingError] = useState("");
 
   const handleLogin = (role) => {
     const u = USERS[role];
@@ -231,6 +250,61 @@ export default function App() {
     setEditing(true);
   };
 
+  const submitNewBooking = async () => {
+    setNewBookingError("");
+    if (!newBooking.guest.trim()) {
+      setNewBookingError("Navn på gjest er påkrevd.");
+      return;
+    }
+    if (!newBooking.check_in || !newBooking.check_out) {
+      setNewBookingError("Innsjekk- og utsjekkdato er påkrevd.");
+      return;
+    }
+    if (newBooking.check_out <= newBooking.check_in) {
+      setNewBookingError("Utsjekk må være etter innsjekk.");
+      return;
+    }
+    setLoading(true);
+    const { data: inserted, error } = await supabase
+      .from("bookings")
+      .insert({
+        guest: newBooking.guest.trim(),
+        country: newBooking.country.trim() || null,
+        check_in: toISODate(newBooking.check_in),
+        check_out: toISODate(newBooking.check_out),
+        guests: parseInt(newBooking.guests) || 1,
+        obs: newBooking.obs.trim() || null,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error("submitNewBooking error:", error);
+      setNewBookingError("Noe gikk galt ved lagring. Prøv igjen.");
+      setLoading(false);
+      return;
+    }
+
+    await supabase.from("bed_plans").insert({
+      booking_id: inserted.id,
+      double_beds: newBooking._double,
+      single_beds: newBooking._single,
+      baby_bed: newBooking._baby,
+    });
+
+    await sendNotification(
+      "booking_updated",
+      inserted,
+      `Ny booking lagt inn: ${newBooking._double} dobbel, ${newBooking._single} enkel${newBooking._baby ? ", barneseng" : ""}. OBS: ${newBooking.obs || "ingen"}`
+    );
+
+    setNewBooking(emptyNewBooking);
+    showToast("✅ Ny booking lagret og Jovita varslet!");
+    setView("list");
+    loadBookings();
+    setLoading(false);
+  };
+
   // LOGIN
   if (!user) {
     return (
@@ -262,6 +336,80 @@ export default function App() {
               <button style={{ ...styles.btnCancel, marginTop: 8 }} onClick={() => setLoginRole(null)}>← Tilbake</button>
             </>
           )}
+        </div>
+      </div>
+    );
+  }
+
+  // NEW BOOKING VIEW (host only)
+  if (view === "newBooking" && user.role === "host") {
+    return (
+      <div style={styles.wrap}>
+        {toast && <div style={{ ...styles.toast, background: toast.type === "success" ? "#00d68f" : "#fc8181" }}>{toast.msg}</div>}
+        <header style={styles.header}>
+          <button style={styles.back} onClick={() => { setView("list"); setNewBooking(emptyNewBooking); setNewBookingError(""); }}>← Tilbake</button>
+          <span style={styles.headerName}>{user.name}</span>
+          <button style={styles.logout} onClick={() => { setUser(null); setView("list"); }}>Logg ut</button>
+        </header>
+
+        <div style={styles.detailCard}>
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>➕ Ny booking</div>
+
+            <label style={styles.label}>Navn på gjest *</label>
+            <input style={styles.input} type="text" placeholder="F.eks. Sarah"
+              value={newBooking.guest}
+              onChange={e => setNewBooking(d => ({ ...d, guest: e.target.value }))} />
+
+            <label style={styles.label}>Land (valgfritt)</label>
+            <input style={styles.input} type="text" placeholder="F.eks. USA"
+              value={newBooking.country}
+              onChange={e => setNewBooking(d => ({ ...d, country: e.target.value }))} />
+
+            <label style={styles.label}>Innsjekk *</label>
+            <input style={styles.input} type="date"
+              value={newBooking.check_in}
+              onChange={e => setNewBooking(d => ({ ...d, check_in: e.target.value }))} />
+
+            <label style={styles.label}>Utsjekk *</label>
+            <input style={styles.input} type="date"
+              value={newBooking.check_out}
+              onChange={e => setNewBooking(d => ({ ...d, check_out: e.target.value }))} />
+
+            <label style={styles.label}>Antall gjester</label>
+            <input style={styles.input} type="number" min="1" max="20"
+              value={newBooking.guests}
+              onChange={e => setNewBooking(d => ({ ...d, guests: e.target.value }))} />
+
+            <label style={styles.label}>Dobbeltsenger</label>
+            <input style={styles.input} type="number" min="0" max="5"
+              value={newBooking._double}
+              onChange={e => setNewBooking(d => ({ ...d, _double: parseInt(e.target.value) || 0 }))} />
+
+            <label style={styles.label}>Enkelsenger</label>
+            <input style={styles.input} type="number" min="0" max="5"
+              value={newBooking._single}
+              onChange={e => setNewBooking(d => ({ ...d, _single: parseInt(e.target.value) || 0 }))} />
+
+            <label style={styles.label}>Barneseng?</label>
+            <select style={styles.input} value={newBooking._baby ? "ja" : "nei"}
+              onChange={e => setNewBooking(d => ({ ...d, _baby: e.target.value === "ja" }))}>
+              <option value="nei">Nei</option>
+              <option value="ja">Ja</option>
+            </select>
+
+            <label style={styles.label}>OBS / Spesielle instrukser</label>
+            <textarea style={{ ...styles.input, height: 80 }}
+              value={newBooking.obs}
+              onChange={e => setNewBooking(d => ({ ...d, obs: e.target.value }))} />
+
+            {newBookingError && <p style={{ color: "#e53e3e", fontSize: 13, margin: "0 0 10px" }}>{newBookingError}</p>}
+
+            <button style={styles.btnSave} onClick={submitNewBooking} disabled={loading}>
+              {loading ? "Lagrer..." : "💾 Lagre booking og varsle Jovita"}
+            </button>
+            <button style={styles.btnCancel} onClick={() => { setView("list"); setNewBooking(emptyNewBooking); setNewBookingError(""); }}>Avbryt</button>
+          </div>
         </div>
       </div>
     );
@@ -452,6 +600,9 @@ export default function App() {
       <header style={styles.header}>
         <span style={styles.headerTitle}>Hovden Hytteservice</span>
         <div style={styles.headerRight}>
+          {user.role === "host" && (
+            <button style={styles.newBookingBtn} onClick={() => setView("newBooking")}>➕ Ny booking</button>
+          )}
           <button style={styles.suppliesBtn} onClick={() => setView("supplies")}>🧴 Forsyninger</button>
           <span style={styles.headerName}>{user.name}</span>
           <button style={styles.logout} onClick={() => setUser(null)}>Logg ut</button>
@@ -464,7 +615,7 @@ export default function App() {
         {bookings.length === 0 && !loading && (
           <div style={styles.empty}>
             <p>Ingen bookinger ennå.</p>
-            {user.role === "host" && <p>Legg til bookinger i Supabase Table Editor.</p>}
+            {user.role === "host" && <p>Trykk "➕ Ny booking" over for å legge til.</p>}
           </div>
         )}
         {bookings.map((b) => {
@@ -492,13 +643,14 @@ export default function App() {
 const styles = {
   wrap: { fontFamily: "'Helvetica Neue',Helvetica,Arial,sans-serif", background: "#f0f4f8", minHeight: "100vh", color: "#1a202c" },
   toast: { position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)", padding: "12px 24px", borderRadius: 10, color: "#0f2540", fontWeight: 700, fontSize: 14, zIndex: 999, boxShadow: "0 4px 16px #0003" },
-  header: { background: "#0f2540", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" },
+  header: { background: "#0f2540", color: "#fff", padding: "14px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 8 },
   headerTitle: { fontWeight: 700, fontSize: 16 },
-  headerRight: { display: "flex", alignItems: "center", gap: 12 },
+  headerRight: { display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" },
   headerName: { fontSize: 13, color: "#00d68f", fontWeight: 600 },
   back: { background: "none", border: "none", color: "#00d68f", fontSize: 14, cursor: "pointer", padding: 0 },
   logout: { background: "none", border: "1px solid #ffffff44", color: "#fff", fontSize: 12, borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
   suppliesBtn: { background: "#00d68f22", border: "1px solid #00d68f", color: "#00d68f", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 600 },
+  newBookingBtn: { background: "#00d68f", border: "1px solid #00d68f", color: "#0f2540", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 700 },
   loginWrap: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" },
   loginBox: { background: "#fff", borderRadius: 16, padding: 36, textAlign: "center", boxShadow: "0 4px 24px #0002", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: 280 },
   loginLabel: { color: "#4a5568", fontSize: 14, margin: 0 },
