@@ -21,6 +21,15 @@ const toISODate = (d) => {
   return d; // input[type=date] already gives YYYY-MM-DD
 };
 
+const formatDuration = (minutes) => {
+  if (minutes == null) return "";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h}t`;
+  return `${h}t ${m}min`;
+};
+
 const StatusBadge = ({ status }) => {
   if (!status) return <span style={styles.badgeNone}>Ikke rapportert</span>;
   if (status === "ok") return <span style={styles.badgeOk}>✓ Alt bra</span>;
@@ -147,6 +156,19 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [user]);
 
+  // Auto-record cleaning start time when Jovita opens a booking with no report yet
+  useEffect(() => {
+    if (view !== "detail" || !booking || user?.role !== "cleaner") return;
+    const sr = booking.status_reports?.[0];
+    if (!sr && !booking.cleaning_started_at) {
+      supabase
+        .from("bookings")
+        .update({ cleaning_started_at: new Date().toISOString() })
+        .eq("id", booking.id)
+        .then(() => loadBookings());
+    }
+  }, [view, selected]);
+
   const sendNotification = async (type, b, message) => {
     await fetch("/api/send-notification", {
       method: "POST",
@@ -204,21 +226,53 @@ export default function App() {
     setLoading(false);
   };
 
+  const computeDurationMinutes = () => {
+    if (!booking?.cleaning_started_at) return null;
+    const started = new Date(booking.cleaning_started_at).getTime();
+    return Math.max(1, Math.round((Date.now() - started) / 60000));
+  };
+
+  // Full status report (with optional comment)
   const submitStatus = async () => {
     setLoading(true);
+    const duration = computeDurationMinutes();
     await supabase.from("status_reports").insert({
       booking_id: selected,
       status: statusType,
       note: statusNote,
       sent_at: new Date().toISOString(),
+      duration_minutes: duration,
     });
+    const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
     await sendNotification(
       "status_report",
       booking,
-      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}`
+      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}${durationText}`
     );
     setStatusNote("");
     showToast("📤 Status sendt til Thomas!");
+    loadBookings();
+    setLoading(false);
+  };
+
+  // Quick one-tap "Vask ferdig!" — sends an "ok" status immediately, no form needed
+  const quickCleanDone = async () => {
+    setLoading(true);
+    const duration = computeDurationMinutes();
+    await supabase.from("status_reports").insert({
+      booking_id: selected,
+      status: "ok",
+      note: "Vasket ferdig ✓",
+      sent_at: new Date().toISOString(),
+      duration_minutes: duration,
+    });
+    const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
+    await sendNotification(
+      "status_report",
+      booking,
+      `✓ Hytta er vasket ferdig!${durationText}`
+    );
+    showToast(`🧹 Vask ferdig sendt til Thomas!${duration ? ` (${formatDuration(duration)})` : ""}`);
     loadBookings();
     setLoading(false);
   };
@@ -554,10 +608,24 @@ export default function App() {
                 <div style={styles.statusDone}>
                   <StatusBadge status={sr.status} />
                   <div style={styles.statusNote}>{sr.note}</div>
+                  {sr.duration_minutes != null && (
+                    <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
+                  )}
                   <div style={styles.statusTime}>Sendt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
                 </div>
               ) : (
                 <>
+                  {booking.cleaning_started_at && (
+                    <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
+                      ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                  )}
+                  <button style={styles.btnQuickDone} onClick={quickCleanDone} disabled={loading}>
+                    {loading ? "Sender..." : "🧹 Vask ferdig!"}
+                  </button>
+                  <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", margin: "8px 0 16px" }}>
+                    eller send en detaljert rapport under
+                  </p>
                   <div style={styles.radioRow}>
                     <label style={styles.radioLabel}>
                       <input type="radio" name="status" value="ok" checked={statusType === "ok"} onChange={() => setStatusType("ok")} /> Alt bra
@@ -584,6 +652,9 @@ export default function App() {
               <div style={styles.statusDone}>
                 <StatusBadge status={sr.status} />
                 <div style={styles.statusNote}>{sr.note}</div>
+                {sr.duration_minutes != null && (
+                  <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
+                )}
                 <div style={styles.statusTime}>Mottatt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
               </div>
             </div>
@@ -690,6 +761,7 @@ const styles = {
   btnCancel: { width: "100%", padding: "12px 0", background: "#e2e8f0", color: "#4a5568", border: "none", borderRadius: 10, fontSize: 14, cursor: "pointer" },
   btnEdit: { width: "100%", padding: "12px 0", background: "#edf2f7", color: "#0f2540", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
   btnSend: { width: "100%", padding: "12px 0", background: "#00d68f", color: "#0f2540", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
+  btnQuickDone: { width: "100%", padding: "16px 0", background: "#0f2540", color: "#fff", border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: "pointer" },
   radioRow: { display: "flex", gap: 20, marginBottom: 12 },
   radioLabel: { fontSize: 14, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" },
   statusDone: { background: "#f0fff4", borderRadius: 10, padding: 14 },
