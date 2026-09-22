@@ -5,6 +5,7 @@ export default async (req) => {
   const JOVITA_EMAIL = 'jovitakakia@gmail.com'
   const THOMAS_EMAIL = 'thnyga@online.no'
 
+  // Added bcc to our list of variables
   let to, bcc, subject, html
 
   if (type === 'booking_updated') {
@@ -22,7 +23,7 @@ export default async (req) => {
           <p><strong>Gjest:</strong> ${guest}</p>
           <p><strong>Inn/ut:</strong> ${checkIn} → ${checkOut}</p>
           <p><strong>Melding:</strong> ${message}</p>
-          <a href="https://ekstrah-nd-bnb.netlify.app" 
+          <a href="https://ekstrah-nd-bnb.netlify.app"
              style="display: inline-block; background: #0f2540; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 16px;">
             Åpne appen
           </a>
@@ -45,7 +46,7 @@ export default async (req) => {
           <p><strong>Gjest:</strong> ${guest}</p>
           <p><strong>Inn/ut:</strong> ${checkIn} → ${checkOut}</p>
           <p><strong>Status:</strong> ${message}</p>
-          <a href="https://ekstrah-nd-bnb.netlify.app" 
+          <a href="https://ekstrah-nd-bnb.netlify.app"
              style="display: inline-block; background: #0f2540; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 16px;">
             Åpne appen
           </a>
@@ -66,7 +67,7 @@ export default async (req) => {
         <div style="background: #f8fafc; padding: 20px; border-radius: 0 0 10px 10px; border: 1px solid #e2e8f0;">
           <h3 style="color: #0f2540;">🧴 Forsyning tom</h3>
           <p>${message}</p>
-          <a href="https://ekstrah-nd-bnb.netlify.app" 
+          <a href="https://ekstrah-nd-bnb.netlify.app"
              style="display: inline-block; background: #0f2540; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 16px;">
             Åpne appen
           </a>
@@ -75,7 +76,7 @@ export default async (req) => {
     `
   }
 
-  // Build the email payload
+  // Build the email payload — uses the verified ekstrahaand.no domain, no testing override
   const emailPayload = {
     from: 'Ekstrahånd <post@ekstrahaand.no>',
     to: to,
