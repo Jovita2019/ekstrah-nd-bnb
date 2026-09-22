@@ -98,7 +98,7 @@ export default function App() {
 
   const handleLogin = (role) => {
     const u = USERS[role];
-    if (password === u.password) {
+    if (password.trim().toLowerCase() === u.password.toLowerCase()) {
       setUser(u);
       setPassword("");
       setLoginError("");
@@ -156,19 +156,6 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [user]);
 
-  // Auto-record cleaning start time when Jovita opens a booking with no report yet
-  useEffect(() => {
-    if (view !== "detail" || !booking || user?.role !== "cleaner") return;
-    const sr = booking.status_reports?.[0];
-    if (!sr && !booking.cleaning_started_at) {
-      supabase
-        .from("bookings")
-        .update({ cleaning_started_at: new Date().toISOString() })
-        .eq("id", booking.id)
-        .then(() => loadBookings());
-    }
-  }, [view, selected]);
-
   const sendNotification = async (type, b, message) => {
     await fetch("/api/send-notification", {
       method: "POST",
@@ -222,6 +209,18 @@ export default function App() {
     );
     setEditing(false);
     showToast("✅ Lagret og Jovita varslet på e-post!");
+    loadBookings();
+    setLoading(false);
+  };
+
+  // Manually start the cleaning clock — pressed by Jovita when she actually begins cleaning
+  const startCleaning = async () => {
+    setLoading(true);
+    await supabase
+      .from("bookings")
+      .update({ cleaning_started_at: new Date().toISOString() })
+      .eq("id", booking.id);
+    showToast("▶️ Vask startet!");
     loadBookings();
     setLoading(false);
   };
@@ -613,18 +612,19 @@ export default function App() {
                   )}
                   <div style={styles.statusTime}>Sendt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
                 </div>
+              ) : !booking.cleaning_started_at ? (
+                <>
+                  <p style={{ fontSize: 13, color: "#718096", marginTop: -4, marginBottom: 14 }}>
+                    Trykk når du faktisk begynner å vaske — det gir riktig tidsbruk.
+                  </p>
+                  <button style={styles.btnQuickDone} onClick={startCleaning} disabled={loading}>
+                    {loading ? "Starter..." : "▶️ Start vask"}
+                  </button>
+                </>
               ) : (
                 <>
-                  {booking.cleaning_started_at && (
-                    <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
-                      ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
-                    </p>
-                  )}
-                  <button style={styles.btnQuickDone} onClick={quickCleanDone} disabled={loading}>
-                    {loading ? "Sender..." : "🧹 Vask ferdig!"}
-                  </button>
-                  <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", margin: "8px 0 16px" }}>
-                    eller send en detaljert rapport under
+                  <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
+                    ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
                   </p>
                   <div style={styles.radioRow}>
                     <label style={styles.radioLabel}>
@@ -639,6 +639,12 @@ export default function App() {
                     value={statusNote} onChange={e => setStatusNote(e.target.value)} />
                   <button style={styles.btnSend} onClick={submitStatus} disabled={loading}>
                     {loading ? "Sender..." : "📤 Send status til Thomas"}
+                  </button>
+                  <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", margin: "16px 0 8px" }}>
+                    eller
+                  </p>
+                  <button style={styles.btnQuickDone} onClick={quickCleanDone} disabled={loading}>
+                    {loading ? "Sender..." : "🧹 Vask ferdig!"}
                   </button>
                 </>
               )}
