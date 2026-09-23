@@ -89,6 +89,7 @@ export default function App() {
   const [newBooking, setNewBooking] = useState(emptyNewBooking);
   const [statusNote, setStatusNote] = useState("");
   const [statusType, setStatusType] = useState("ok");
+  const [statusPhoto, setStatusPhoto] = useState(null);
   const [loading, setLoading] = useState(false);
   const [toast, setToast] = useState(null);
   const [loginRole, setLoginRole] = useState(null);
@@ -156,7 +157,7 @@ export default function App() {
     return () => supabase.removeChannel(channel);
   }, [user]);
 
-  const sendNotification = async (type, b, message) => {
+  const sendNotification = async (type, b, message, photoUrl = null) => {
     await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -166,8 +167,23 @@ export default function App() {
         checkIn: formatDate(b.check_in),
         checkOut: formatDate(b.check_out),
         message,
+        photoUrl,
       }),
     });
+  };
+
+  // Upload the selected status-report photo to Supabase Storage, return its public URL
+  const uploadStatusPhoto = async () => {
+    if (!statusPhoto) return null;
+    const ext = statusPhoto.name.split(".").pop();
+    const path = `${booking.id}-${Date.now()}.${ext}`;
+    const { error } = await supabase.storage.from("status-photos").upload(path, statusPhoto);
+    if (error) {
+      console.error("photo upload error:", error);
+      return null;
+    }
+    const { data } = supabase.storage.from("status-photos").getPublicUrl(path);
+    return data.publicUrl;
   };
 
   const notifySupplyEmpty = async (item) => {
@@ -235,20 +251,24 @@ export default function App() {
   const submitStatus = async () => {
     setLoading(true);
     const duration = computeDurationMinutes();
+    const photoUrl = await uploadStatusPhoto();
     await supabase.from("status_reports").insert({
       booking_id: selected,
       status: statusType,
       note: statusNote,
       sent_at: new Date().toISOString(),
       duration_minutes: duration,
+      photo_url: photoUrl,
     });
     const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
     await sendNotification(
       "status_report",
       booking,
-      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}${durationText}`
+      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}${durationText}`,
+      photoUrl
     );
     setStatusNote("");
+    setStatusPhoto(null);
     showToast("📤 Status sendt til Thomas!");
     loadBookings();
     setLoading(false);
@@ -258,19 +278,23 @@ export default function App() {
   const quickCleanDone = async () => {
     setLoading(true);
     const duration = computeDurationMinutes();
+    const photoUrl = await uploadStatusPhoto();
     await supabase.from("status_reports").insert({
       booking_id: selected,
       status: "ok",
       note: "Vasket ferdig ✓",
       sent_at: new Date().toISOString(),
       duration_minutes: duration,
+      photo_url: photoUrl,
     });
     const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
     await sendNotification(
       "status_report",
       booking,
-      `✓ Hytta er vasket ferdig!${durationText}`
+      `✓ Hytta er vasket ferdig!${durationText}`,
+      photoUrl
     );
+    setStatusPhoto(null);
     showToast(`🧹 Vask ferdig sendt til Thomas!${duration ? ` (${formatDuration(duration)})` : ""}`);
     loadBookings();
     setLoading(false);
@@ -607,6 +631,9 @@ export default function App() {
                 <div style={styles.statusDone}>
                   <StatusBadge status={sr.status} />
                   <div style={styles.statusNote}>{sr.note}</div>
+                  {sr.photo_url && (
+                    <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                  )}
                   {sr.duration_minutes != null && (
                     <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
                   )}
@@ -637,6 +664,14 @@ export default function App() {
                   <textarea style={{ ...styles.input, height: 80 }}
                     placeholder={statusType === "ok" ? "Valgfri kommentar..." : "Beskriv avviket..."}
                     value={statusNote} onChange={e => setStatusNote(e.target.value)} />
+                  <label style={styles.label}>📷 Bilde (valgfritt)</label>
+                  <input style={styles.input} type="file" accept="image/*" capture="environment"
+                    onChange={e => setStatusPhoto(e.target.files?.[0] || null)} />
+                  {statusPhoto && (
+                    <p style={{ fontSize: 12, color: "#00a06f", marginTop: -6, marginBottom: 10 }}>
+                      ✓ {statusPhoto.name} valgt
+                    </p>
+                  )}
                   <button style={styles.btnSend} onClick={submitStatus} disabled={loading}>
                     {loading ? "Sender..." : "📤 Send status til Thomas"}
                   </button>
@@ -658,6 +693,9 @@ export default function App() {
               <div style={styles.statusDone}>
                 <StatusBadge status={sr.status} />
                 <div style={styles.statusNote}>{sr.note}</div>
+                {sr.photo_url && (
+                  <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                )}
                 {sr.duration_minutes != null && (
                   <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
                 )}
@@ -772,6 +810,7 @@ const styles = {
   radioLabel: { fontSize: 14, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" },
   statusDone: { background: "#f0fff4", borderRadius: 10, padding: 14 },
   statusNote: { fontSize: 13, color: "#2d3748", marginTop: 8, lineHeight: 1.5 },
+  reportPhoto: { width: "100%", borderRadius: 10, marginTop: 10, display: "block" },
   statusTime: { fontSize: 11, color: "#a0aec0", marginTop: 6 },
   empty: { textAlign: "center", color: "#718096", fontSize: 14, marginTop: 40 },
 };
