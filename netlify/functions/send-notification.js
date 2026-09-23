@@ -1,5 +1,5 @@
 export default async (req) => {
-  const { type, guest, checkIn, checkOut, message } = await req.json()
+  const { type, guest, checkIn, checkOut, message, photoUrl } = await req.json()
   const RESEND_API_KEY = process.env.RESEND_API_KEY
 
   const JOVITA_EMAIL = 'jovitakakia@gmail.com'
@@ -46,6 +46,7 @@ export default async (req) => {
           <p><strong>Gjest:</strong> ${guest}</p>
           <p><strong>Inn/ut:</strong> ${checkIn} → ${checkOut}</p>
           <p><strong>Status:</strong> ${message}</p>
+          ${photoUrl ? `<img src="${photoUrl}" alt="Bilde fra rapport" style="width:100%;max-width:460px;border-radius:10px;margin-top:8px;" />` : ''}
           <a href="https://ekstrah-nd-bnb.netlify.app"
              style="display: inline-block; background: #0f2540; color: #fff; padding: 12px 24px; border-radius: 8px; text-decoration: none; margin-top: 16px;">
             Åpne appen
