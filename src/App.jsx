@@ -217,7 +217,14 @@ export default function App() {
         baby_bed: editData._baby,
       });
     }
-    await supabase.from("bookings").update({ obs: editData.obs }).eq("id", editData.id);
+    await supabase.from("bookings").update({
+      obs: editData.obs,
+      guest: (editData.guest || "").trim(),
+      country: (editData.country || "").trim() || null,
+      check_in: toISODate(editData.check_in),
+      check_out: toISODate(editData.check_out),
+      guests: parseInt(editData.guests) || 1,
+    }).eq("id", editData.id);
     await sendNotification(
       "booking_updated",
       editData,
@@ -616,6 +623,23 @@ export default function App() {
 
           {editing && user.role === "host" ? (
             <div style={styles.section}>
+              <div style={styles.sectionTitle}>✏️ Rediger gjesteinfo</div>
+              <label style={styles.label}>Navn på gjest</label>
+              <input style={styles.input} type="text" value={editData.guest || ""}
+                onChange={e => setEditData(d => ({ ...d, guest: e.target.value }))} />
+              <label style={styles.label}>Land (valgfritt)</label>
+              <input style={styles.input} type="text" value={editData.country || ""}
+                onChange={e => setEditData(d => ({ ...d, country: e.target.value }))} />
+              <label style={styles.label}>Innsjekk</label>
+              <input style={styles.input} type="date" value={editData.check_in || ""}
+                onChange={e => setEditData(d => ({ ...d, check_in: e.target.value }))} />
+              <label style={styles.label}>Utsjekk</label>
+              <input style={styles.input} type="date" value={editData.check_out || ""}
+                onChange={e => setEditData(d => ({ ...d, check_out: e.target.value }))} />
+              <label style={styles.label}>Antall gjester</label>
+              <input style={styles.input} type="number" min="1" value={editData.guests}
+                onChange={e => setEditData(d => ({ ...d, guests: parseInt(e.target.value) || 1 }))} />
+
               <div style={styles.sectionTitle}>✏️ Rediger oppredning</div>
               <label style={styles.label}>Dobbeltsenger</label>
               <input style={styles.input} type="number" min="0" max="5" value={editData._double}
@@ -665,7 +689,7 @@ export default function App() {
               ) : null}
 
               {user.role === "host" && (
-                <button style={styles.btnEdit} onClick={() => startEdit(booking)}>✏️ Rediger instrukser</button>
+                <button style={styles.btnEdit} onClick={() => startEdit(booking)}>✏️ Rediger booking</button>
               )}
             </>
           )}
