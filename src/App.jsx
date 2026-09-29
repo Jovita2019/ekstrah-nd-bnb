@@ -543,6 +543,53 @@ export default function App() {
     );
   }
 
+  // STATISTIKK VIEW
+  if (view === "stats") {
+    const countryCounts = {};
+    bookings.forEach((b) => {
+      const c = (b.country || "").trim();
+      if (!c) return;
+      countryCounts[c] = (countryCounts[c] || 0) + 1;
+    });
+    const sortedCountries = Object.entries(countryCounts).sort((a, b) => b[1] - a[1]);
+    const totalBookingsWithCountry = sortedCountries.reduce((sum, [, count]) => sum + count, 0);
+
+    return (
+      <div style={styles.wrap}>
+        <header style={styles.header}>
+          <button style={styles.back} onClick={() => setView("list")}>← Tilbake</button>
+          <span style={styles.headerName}>{user.name}</span>
+          <button style={styles.logout} onClick={() => { setUser(null); setView("list"); }}>Logg ut</button>
+        </header>
+
+        <div style={styles.listWrap}>
+          <div style={styles.listTitle}>📊 Statistikk</div>
+          <div style={{ ...styles.card, cursor: "default", marginBottom: 14 }}>
+            <div style={styles.cardLeft}>
+              <div style={styles.cardGuest}>{sortedCountries.length} land</div>
+              <div style={styles.cardMeta}>{totalBookingsWithCountry} bookinger med land registrert</div>
+            </div>
+          </div>
+          {sortedCountries.length === 0 && (
+            <div style={styles.empty}>
+              <p>Ingen land registrert på bookinger ennå.</p>
+            </div>
+          )}
+          {sortedCountries.map(([country, count]) => (
+            <div key={country} style={{ ...styles.card, cursor: "default" }}>
+              <div style={styles.cardLeft}>
+                <div style={styles.cardGuest}>{country}</div>
+              </div>
+              <div style={styles.cardRight}>
+                <div style={styles.cardMeta}>{count} {count === 1 ? "booking" : "bookinger"}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // DETAIL VIEW
   if (view === "detail" && booking) {
     const bp = booking.bed_plans?.[0] || {};
@@ -560,8 +607,8 @@ export default function App() {
         <div style={styles.detailCard}>
           <div style={styles.detailTop}>
             <div>
-              <div style={styles.guestName}>{booking.country} {booking.guest}</div>
-              <div style={styles.guestDates}>{formatDate(booking.check_in)} → {formatDate(booking.check_out)}</div>
+              <div style={styles.guestName}>{booking.guest}</div>
+              <div style={styles.guestDates}>{formatDate(booking.check_in)} → {formatDate(booking.check_out)}{booking.country ? ` · ${booking.country}` : ""}</div>
               <div style={styles.guestCount}>👥 {booking.guests} gjester</div>
             </div>
             <StatusBadge status={sr?.status} />
@@ -719,6 +766,7 @@ export default function App() {
             <button style={styles.newBookingBtn} onClick={() => setView("newBooking")}>➕ Ny booking</button>
           )}
           <button style={styles.suppliesBtn} onClick={() => setView("supplies")}>🧴 Forsyninger</button>
+          <button style={styles.suppliesBtn} onClick={() => setView("stats")}>📊 Statistikk</button>
           <span style={styles.headerName}>{user.name}</span>
           <button style={styles.logout} onClick={() => setUser(null)}>Logg ut</button>
         </div>
@@ -738,8 +786,8 @@ export default function App() {
           return (
             <div key={b.id} style={styles.card} onClick={() => { setSelected(b.id); setView("detail"); }}>
               <div style={styles.cardLeft}>
-                <div style={styles.cardGuest}>{b.country} {b.guest}</div>
-                <div style={styles.cardDates}>{formatDate(b.check_in)} → {formatDate(b.check_out)}</div>
+                <div style={styles.cardGuest}>{b.guest}</div>
+                <div style={styles.cardDates}>{formatDate(b.check_in)} → {formatDate(b.check_out)}{b.country ? ` · ${b.country}` : ""}</div>
                 <div style={styles.cardMeta}>👥 {b.guests} gjester</div>
                 {b.obs && <div style={styles.cardObs}>⚠️ Har OBS</div>}
               </div>
