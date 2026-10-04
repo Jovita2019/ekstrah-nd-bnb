@@ -37,6 +37,15 @@ const StatusBadge = ({ status }) => {
   return null;
 };
 
+// status_reports can hold up to two rows per booking: one sent on arrival (phase "arrival"),
+// one sent when cleaning is finished (phase "done"). Older rows have no phase — treat them as "done".
+const findReport = (reports, phase) =>
+  (reports || []).find((r) => (r.phase || "done") === phase) || null;
+
+// Badge on the list/detail header shows the most advanced status: done > arrival > none.
+const overallReport = (reports) =>
+  findReport(reports, "done") || findReport(reports, "arrival") || null;
+
 const SupplyBadge = ({ status }) => {
   if (status === "ok") return <span style={styles.badgeOk}>✓ OK</span>;
   if (status === "low") return <span style={styles.badgeObs}>⚠ Lite igjen</span>;
@@ -65,6 +74,18 @@ const Logo = () => (
     <text x="100" y="84" fontFamily="Helvetica,Arial,sans-serif" fontSize="7" fontWeight="500" fill="#fff" textAnchor="middle" letterSpacing="1.5">Hytteservice &amp; IT-løsninger</text>
   </svg>
 );
+
+// Public VAPID key for push notifications (safe to expose — it's the public half of the key pair)
+const VAPID_PUBLIC_KEY = "BKmk243WmrUjeSZYvg5X-d5Ov48NVEpsYwy-ufAXf8P3JGdrO90K99I3o2J8Sq2sx2NF8J39RwII1UoSSiKTHm4";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
 
 const emptyNewBooking = {
   guest: "",
@@ -96,6 +117,71 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [newBookingError, setNewBookingError] = useState("");
+  const [pushStatus, setPushStatus] = useState("unknown"); // unknown | busy | enabled | denied | unsupported
+
+  const checkPushStatus = async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      return;
+    }
+    if (Notification.permission === "denied") {
+      setPushStatus("denied");
+      return;
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      setPushStatus(sub ? "enabled" : "unknown");
+    } catch {
+      setPushStatus("unknown");
+    }
+  };
+
+  // Ask for permission and subscribe this phone/browser to push notifications for the logged-in role
+  const enablePush = async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      showToast("⚠️ Varsler støttes ikke i denne nettleseren");
+      return;
+    }
+    setPushStatus("busy");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushStatus("denied");
+        showToast("🔕 Du avslo varsler");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        });
+      }
+      const json = sub.toJSON();
+      await supabase.from("push_subscriptions").upsert(
+        {
+          role: user.role,
+          endpoint: json.endpoint,
+          p256dh: json.keys.p256dh,
+          auth: json.keys.auth,
+        },
+        { onConflict: "endpoint" }
+      );
+      setPushStatus("enabled");
+      showToast("🔔 Varsler skrudd på!");
+    } catch (err) {
+      console.error("push subscribe error:", err);
+      setPushStatus("unknown");
+      showToast("⚠️ Klarte ikke å skru på varsler");
+    }
+  };
+
+  useEffect(() => {
+    if (user) checkPushStatus();
+  }, [user]);
 
   const handleLogin = (role) => {
     const u = USERS[role];
@@ -186,7 +272,12 @@ export default function App() {
     return data.publicUrl;
   };
 
-  const notifySupplyEmpty = async (item) => {
+  // Notified for both "low" and "empty" — these are the states that shouldn't get missed.
+  const notifySupplyStatus = async (item, newStatus) => {
+    const message =
+      newStatus === "empty"
+        ? `${item.name} er tom og trenger påfyll.`
+        : `${item.name} er i ferd med å bli tom — lite igjen.`;
     await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -195,7 +286,7 @@ export default function App() {
         guest: "",
         checkIn: "",
         checkOut: "",
-        message: `${item.name} er tom og trenger påfyll.`,
+        message,
       }),
     });
   };
@@ -236,31 +327,49 @@ export default function App() {
     setLoading(false);
   };
 
-  // Manually start the cleaning clock — pressed by Jovita when she actually begins cleaning
-  const startCleaning = async () => {
-    setLoading(true);
-    await supabase
-      .from("bookings")
-      .update({ cleaning_started_at: new Date().toISOString() })
-      .eq("id", booking.id);
-    showToast("▶️ Vask startet!");
-    loadBookings();
-    setLoading(false);
-  };
-
   const computeDurationMinutes = () => {
     if (!booking?.cleaning_started_at) return null;
     const started = new Date(booking.cleaning_started_at).getTime();
     return Math.max(1, Math.round((Date.now() - started) / 60000));
   };
 
-  // Full status report (with optional comment)
-  const submitStatus = async () => {
+  // Sent on arrival, before cleaning begins — documents status (with optional photo),
+  // and starts the cleaning clock at the same time.
+  const submitArrivalReport = async () => {
+    setLoading(true);
+    const photoUrl = await uploadStatusPhoto();
+    const now = new Date().toISOString();
+    await supabase.from("status_reports").insert({
+      booking_id: selected,
+      phase: "arrival",
+      status: statusType,
+      note: statusNote,
+      sent_at: now,
+      photo_url: photoUrl,
+    });
+    await supabase.from("bookings").update({ cleaning_started_at: now }).eq("id", selected);
+    await sendNotification(
+      "arrival_report",
+      booking,
+      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}`,
+      photoUrl
+    );
+    setStatusNote("");
+    setStatusPhoto(null);
+    setStatusType("ok");
+    showToast("📍 Ankomststatus sendt — vask startet!");
+    loadBookings();
+    setLoading(false);
+  };
+
+  // Sent when cleaning is finished (with optional comment/photo)
+  const submitDoneReport = async () => {
     setLoading(true);
     const duration = computeDurationMinutes();
     const photoUrl = await uploadStatusPhoto();
     await supabase.from("status_reports").insert({
       booking_id: selected,
+      phase: "done",
       status: statusType,
       note: statusNote,
       sent_at: new Date().toISOString(),
@@ -276,18 +385,20 @@ export default function App() {
     );
     setStatusNote("");
     setStatusPhoto(null);
-    showToast("📤 Status sendt til Thomas!");
+    setStatusType("ok");
+    showToast("📤 Ferdigrapport sendt til Thomas!");
     loadBookings();
     setLoading(false);
   };
 
-  // Quick one-tap "Vask ferdig!" — sends an "ok" status immediately, no form needed
+  // Quick one-tap "Vask ferdig!" — sends an "ok" done-report immediately, no form needed
   const quickCleanDone = async () => {
     setLoading(true);
     const duration = computeDurationMinutes();
     const photoUrl = await uploadStatusPhoto();
     await supabase.from("status_reports").insert({
       booking_id: selected,
+      phase: "done",
       status: "ok",
       note: "Vasket ferdig ✓",
       sent_at: new Date().toISOString(),
@@ -315,9 +426,9 @@ export default function App() {
       .from("supplies")
       .update({ status: newStatus, updated_at: new Date().toISOString(), updated_by: user.name })
       .eq("id", item.id);
-    if (newStatus === "empty") {
-      await notifySupplyEmpty(item);
-      showToast(`✕ ${item.name} markert som tom — Thomas varslet!`);
+    if (newStatus === "empty" || newStatus === "low") {
+      await notifySupplyStatus(item, newStatus);
+      showToast(`${newStatus === "empty" ? "✕" : "⚠"} ${item.name} → ${SUPPLY_LABEL[newStatus]} — Thomas varslet!`);
     } else {
       showToast(`Oppdatert: ${item.name} → ${SUPPLY_LABEL[newStatus]}`);
     }
@@ -600,7 +711,9 @@ export default function App() {
   // DETAIL VIEW
   if (view === "detail" && booking) {
     const bp = booking.bed_plans?.[0] || {};
-    const sr = booking.status_reports?.[0];
+    const arrivalReport = findReport(booking.status_reports, "arrival");
+    const doneReport = findReport(booking.status_reports, "done");
+    const sr = overallReport(booking.status_reports);
 
     return (
       <div style={styles.wrap}>
@@ -697,30 +810,57 @@ export default function App() {
           {/* Status for cleaner */}
           {user.role === "cleaner" && (
             <div style={styles.section}>
-              <div style={styles.sectionTitle}>📋 Statusrapport etter utsjekk</div>
-              {sr ? (
-                <div style={styles.statusDone}>
-                  <StatusBadge status={sr.status} />
-                  <div style={styles.statusNote}>{sr.note}</div>
-                  {sr.photo_url && (
-                    <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
-                  )}
-                  {sr.duration_minutes != null && (
-                    <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
-                  )}
-                  <div style={styles.statusTime}>Sendt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
-                </div>
-              ) : !booking.cleaning_started_at ? (
+              {/* Phase 1: not arrived yet — send arrival status, which also starts the clock */}
+              {!arrivalReport && (
                 <>
+                  <div style={styles.sectionTitle}>📍 Statusrapport ved ankomst</div>
                   <p style={{ fontSize: 13, color: "#718096", marginTop: -4, marginBottom: 14 }}>
-                    Trykk når du faktisk begynner å vaske — det gir riktig tidsbruk.
+                    Send status (og bilde ved behov) når du ankommer. Dette starter også vaskeklokken.
                   </p>
-                  <button style={styles.btnQuickDone} onClick={startCleaning} disabled={loading}>
-                    {loading ? "Starter..." : "▶️ Start vask"}
+                  <div style={styles.radioRow}>
+                    <label style={styles.radioLabel}>
+                      <input type="radio" name="status" value="ok" checked={statusType === "ok"} onChange={() => setStatusType("ok")} /> Alt bra
+                    </label>
+                    <label style={styles.radioLabel}>
+                      <input type="radio" name="status" value="obs" checked={statusType === "obs"} onChange={() => setStatusType("obs")} /> Obs / Avvik
+                    </label>
+                  </div>
+                  <textarea style={{ ...styles.input, height: 80 }}
+                    placeholder={statusType === "ok" ? "Valgfri kommentar..." : "Beskriv avviket..."}
+                    value={statusNote} onChange={e => setStatusNote(e.target.value)} />
+                  <label style={styles.label}>📷 Bilde (valgfritt)</label>
+                  <input style={styles.input} type="file" accept="image/*" capture="environment"
+                    onChange={e => setStatusPhoto(e.target.files?.[0] || null)} />
+                  {statusPhoto && (
+                    <p style={{ fontSize: 12, color: "#00a06f", marginTop: -6, marginBottom: 10 }}>
+                      ✓ {statusPhoto.name} valgt
+                    </p>
+                  )}
+                  <button style={styles.btnSend} onClick={submitArrivalReport} disabled={loading}>
+                    {loading ? "Sender..." : "📍 Send ankomststatus og start vask"}
                   </button>
                 </>
-              ) : (
+              )}
+
+              {/* Arrival report already sent — show it */}
+              {arrivalReport && (
                 <>
+                  <div style={styles.sectionTitle}>📍 Status ved ankomst</div>
+                  <div style={styles.statusDone}>
+                    <StatusBadge status={arrivalReport.status} />
+                    <div style={styles.statusNote}>{arrivalReport.note}</div>
+                    {arrivalReport.photo_url && (
+                      <img src={arrivalReport.photo_url} alt="Bilde fra ankomst" style={styles.reportPhoto} />
+                    )}
+                    <div style={styles.statusTime}>Sendt: {new Date(arrivalReport.sent_at).toLocaleString("no-NO")}</div>
+                  </div>
+                </>
+              )}
+
+              {/* Phase 2: arrived, cleaning in progress — send the finished report */}
+              {arrivalReport && !doneReport && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={styles.sectionTitle}>🧹 Vask pågår</div>
                   <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
                     ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
                   </p>
@@ -743,8 +883,8 @@ export default function App() {
                       ✓ {statusPhoto.name} valgt
                     </p>
                   )}
-                  <button style={styles.btnSend} onClick={submitStatus} disabled={loading}>
-                    {loading ? "Sender..." : "📤 Send status til Thomas"}
+                  <button style={styles.btnSend} onClick={submitDoneReport} disabled={loading}>
+                    {loading ? "Sender..." : "📤 Send ferdigrapport til Thomas"}
                   </button>
                   <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", margin: "16px 0 8px" }}>
                     eller
@@ -752,25 +892,57 @@ export default function App() {
                   <button style={styles.btnQuickDone} onClick={quickCleanDone} disabled={loading}>
                     {loading ? "Sender..." : "🧹 Vask ferdig!"}
                   </button>
-                </>
+                </div>
+              )}
+
+              {/* Phase 3: done */}
+              {doneReport && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={styles.sectionTitle}>✅ Ferdigrapport</div>
+                  <div style={styles.statusDone}>
+                    <StatusBadge status={doneReport.status} />
+                    <div style={styles.statusNote}>{doneReport.note}</div>
+                    {doneReport.photo_url && (
+                      <img src={doneReport.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                    )}
+                    {doneReport.duration_minutes != null && (
+                      <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(doneReport.duration_minutes)}</div>
+                    )}
+                    <div style={styles.statusTime}>Sendt: {new Date(doneReport.sent_at).toLocaleString("no-NO")}</div>
+                  </div>
+                </div>
               )}
             </div>
           )}
 
           {/* Status for host */}
-          {user.role === "host" && sr && (
+          {user.role === "host" && arrivalReport && (
             <div style={styles.section}>
-              <div style={styles.sectionTitle}>📋 Status fra Jovita</div>
+              <div style={styles.sectionTitle}>📍 Ankomststatus fra Jovita</div>
               <div style={styles.statusDone}>
-                <StatusBadge status={sr.status} />
-                <div style={styles.statusNote}>{sr.note}</div>
-                {sr.photo_url && (
-                  <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                <StatusBadge status={arrivalReport.status} />
+                <div style={styles.statusNote}>{arrivalReport.note}</div>
+                {arrivalReport.photo_url && (
+                  <img src={arrivalReport.photo_url} alt="Bilde fra ankomst" style={styles.reportPhoto} />
                 )}
-                {sr.duration_minutes != null && (
-                  <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
+                <div style={styles.statusTime}>Mottatt: {new Date(arrivalReport.sent_at).toLocaleString("no-NO")}</div>
+              </div>
+            </div>
+          )}
+
+          {user.role === "host" && doneReport && (
+            <div style={styles.section}>
+              <div style={styles.sectionTitle}>✅ Ferdigrapport fra Jovita</div>
+              <div style={styles.statusDone}>
+                <StatusBadge status={doneReport.status} />
+                <div style={styles.statusNote}>{doneReport.note}</div>
+                {doneReport.photo_url && (
+                  <img src={doneReport.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
                 )}
-                <div style={styles.statusTime}>Mottatt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
+                {doneReport.duration_minutes != null && (
+                  <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(doneReport.duration_minutes)}</div>
+                )}
+                <div style={styles.statusTime}>Mottatt: {new Date(doneReport.sent_at).toLocaleString("no-NO")}</div>
               </div>
             </div>
           )}
@@ -791,6 +963,22 @@ export default function App() {
           )}
           <button style={styles.suppliesBtn} onClick={() => setView("supplies")}>🧴 Forsyninger</button>
           <button style={styles.suppliesBtn} onClick={() => setView("stats")}>📊 Statistikk</button>
+          {pushStatus !== "unsupported" && pushStatus !== "enabled" && (
+            <button
+              style={styles.suppliesBtn}
+              disabled={pushStatus === "busy"}
+              onClick={
+                pushStatus === "denied"
+                  ? () => showToast("🔕 Varsler er blokkert — skru på i nettleserens innstillinger for denne siden")
+                  : enablePush
+              }
+            >
+              {pushStatus === "busy" ? "..." : pushStatus === "denied" ? "🔕 Varsler blokkert" : "🔔 Skru på varsler"}
+            </button>
+          )}
+          {pushStatus === "enabled" && (
+            <span style={{ fontSize: 13, color: "#00d68f" }}>🔔 Varsler på</span>
+          )}
           <span style={styles.headerName}>{user.name}</span>
           <button style={styles.logout} onClick={() => setUser(null)}>Logg ut</button>
         </div>
@@ -806,7 +994,7 @@ export default function App() {
           </div>
         )}
         {bookings.map((b) => {
-          const sr = b.status_reports?.[0];
+          const sr = overallReport(b.status_reports);
           return (
             <div key={b.id} style={styles.card} onClick={() => { setSelected(b.id); setView("detail"); }}>
               <div style={styles.cardLeft}>
