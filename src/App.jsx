@@ -10,6 +10,51 @@ const SUPPLY_STATES = ["ok", "low", "empty"];
 const SUPPLY_LABEL = { ok: "OK", low: "Lite igjen", empty: "Tom" };
 const nextSupplyStatus = (s) => SUPPLY_STATES[(SUPPLY_STATES.indexOf(s) + 1) % SUPPLY_STATES.length];
 
+// Thomas's standard for the cabin — ticked off by the cleaner before the done-report is sent.
+const CHECKLIST = [
+  {
+    group: "Bad",
+    items: [
+      { id: "speil", label: "Speil tørket – ingen støv eller skjolder" },
+      { id: "dusj", label: "Dusjvegger rene – ingen skjolder" },
+      { id: "badgulv", label: "Badegulv uten hår – badene helt rene og ting riktig plassert" },
+    ],
+  },
+  {
+    group: "Rom og møbler",
+    items: [
+      { id: "sofa", label: "Sofa i 2. etasje støvsugd – ingen smuler (også mellom putene)" },
+      { id: "senger", label: "Senger redd og pynt på plass iht. oppredningsplanen" },
+      { id: "stov", label: "Støv tørket av i vinduer og på flater" },
+    ],
+  },
+  {
+    group: "Kjøkken og bod",
+    items: [
+      { id: "skap", label: "Oppvaskmaskin og skapdører tørket godt over – ingen flekker" },
+      { id: "stekeovn", label: "Glass på stekeovn rent – ingen plast/rester" },
+      { id: "vaskemaskin", label: "Skitne kluter vasket og hengt på boden" },
+      { id: "tank", label: "Varmtvannstank støvtørket (bruk støvkosten)" },
+    ],
+  },
+  {
+    group: "Estetikk",
+    items: [
+      { id: "glass", label: "Vannglass står i skap under" },
+      { id: "sape", label: "Holdere med såpe og håndkrem satt sammen" },
+      { id: "flasker", label: "Flasker med lik etikett i samme dusj – tomme beholdere fylt opp" },
+      { id: "dispenser", label: "Såpedispensere satt med åpningen ut" },
+      { id: "vindu", label: "Ting i vinduene satt opp som på bildene" },
+      { id: "perm", label: "Infoperm i holder ved inngang, brosjyrer i kjøkkenskap, dekorbøker i pen stabel under TV (barn/baby: legges i kjøkkenskap)" },
+    ],
+  },
+  {
+    group: "Utenfor",
+    items: [{ id: "sopp", label: "All søppel utenfor hytta fjernet – glass tatt med (ikke i gule søppelsekker)" }],
+  },
+];
+const CHECKLIST_ITEMS = CHECKLIST.flatMap((g) => g.items);
+
 const formatDate = (d) => {
   if (!d) return "";
   const date = new Date(d);
@@ -18,7 +63,7 @@ const formatDate = (d) => {
 
 const toISODate = (d) => {
   if (!d) return "";
-  return d;
+  return d; // input[type=date] already gives YYYY-MM-DD
 };
 
 const formatDuration = (minutes) => {
@@ -30,268 +75,21 @@ const formatDuration = (minutes) => {
   return `${h}t ${m}min`;
 };
 
-// Pricing: 1-2 gjester = 2000, 3-4 = 2300, 5+ = 2625
-const guestRate = (n) => {
-  if (n <= 2) return 2000;
-  if (n <= 4) return 2300;
-  return 2625;
-};
-
-// Format number as Norwegian invoice amount, e.g. "2 300,00"
-const formatKr = (n) =>
-  n.toLocaleString("nb-NO", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-// Format ISO date string as DD.MM.YYYY
-const isoToNO = (d) => {
-  if (!d) return "";
-  const [y, m, day] = d.split("-");
-  return `${day}.${m}.${y}`;
-};
-
-// Format ISO date as "2. sep. 2026"
-const isoToLong = (d) => {
-  if (!d) return "";
-  const months = ["jan", "feb", "mar", "apr", "mai", "jun", "jul", "aug", "sep", "okt", "nov", "des"];
-  const date = new Date(d);
-  return `${date.getDate()}. ${months[date.getMonth()]}. ${date.getFullYear()}`;
-};
-
-// Add days to ISO date string
-const addDays = (isoDate, days) => {
-  const d = new Date(isoDate);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-};
-
-const todayISO = () => new Date().toISOString().slice(0, 10);
-
-// ─── FAKTURA HTML GENERATOR ─────────────────────────────────────────────────
-const generateFakturaHTML = ({ fakturaNum, fakturaDate, dueDate, serviceItems, utleggItems }) => {
-  const sumServices = serviceItems.reduce((s, r) => s + r.sum, 0);
-  const validUtlegg = utleggItems.filter((u) => u.name && parseFloat(u.amount) > 0);
-  const sumUtlegg = validUtlegg.reduce((s, u) => s + parseFloat(u.amount), 0);
-  const mva = sumServices * 0.25;
-  const total = sumServices + mva + sumUtlegg;
-
-  const tableRows = serviceItems
-    .map(
-      (r) => `<tr>
-      <td>${r.desc}</td>
-      <td>${r.guests}</td>
-      <td>${r.rate}</td>
-      <td>${formatKr(r.sum)}</td>
-    </tr>`
-    )
-    .join("\n");
-
-  const utleggRows = validUtlegg
-    .map(
-      (u) => `<tr>
-      <td>Utlegg – ${u.name}</td>
-      <td>–</td>
-      <td>–</td>
-      <td>${formatKr(parseFloat(u.amount))}</td>
-    </tr>`
-    )
-    .join("\n");
-
-  return `<!DOCTYPE html>
-<html lang="no">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Faktura ${fakturaNum} — Hovden Hytteservice</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
-<style>
-*{box-sizing:border-box;margin:0;padding:0;}
-@page { size: A4; margin: 0; }
-body {
-  font-family: 'Inter', sans-serif;
-  background: #525659;
-  margin: 0;
-  padding: 40px 20px;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  min-height: 100vh;
-}
-.faktura {
-  background: #ffffff;
-  width: 100%;
-  max-width: 800px;
-  padding: 50px 55px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-}
-@media print {
-  body { background: #ffffff; padding: 0; display: block; }
-  .faktura { box-shadow: none; max-width: none; padding: 40px 45px; }
-  .print-btn { display: none !important; }
-}
-.print-btn {
-  position: fixed;
-  top: 20px;
-  right: 20px;
-  background: #1a2a3a;
-  color: #fff;
-  border: none;
-  padding: 12px 24px;
-  border-radius: 10px;
-  font-size: 15px;
-  font-weight: 700;
-  cursor: pointer;
-  font-family: 'Inter', sans-serif;
-  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
-}
-.print-btn:hover { background: #00d18b; color: #1a2a3a; }
-.header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 15px; }
-.faktura-title { text-align: right; }
-.faktura-title h1 { font-size: 24px; font-weight: 700; color: #1a2a3a; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 8px; }
-.faktura-meta { font-size: 12px; color: #4a5568; line-height: 1.6; text-align: right; }
-.faktura-meta strong { color: #1a2a3a; }
-.divider { border: none; border-top: 2px solid #6b7a8d; margin: 15px 0 25px; }
-.address-row { display: flex; justify-content: space-between; gap: 20px; margin-bottom: 25px; }
-.address-box { flex: 1; }
-.address-box h3 { font-size: 11px; font-weight: 700; color: #1a2a3a; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px; padding-bottom: 6px; border-bottom: 1px solid #e2e8f0; }
-.address-box p { font-size: 13px; color: #2d3748; line-height: 1.5; }
-.address-box .highlight { color: #1a2a3a; font-weight: 600; }
-.items-table { width: 100%; border-collapse: collapse; margin-bottom: 15px; }
-.items-table thead tr { background: #1a2a3a; color: #fff; }
-.items-table thead th { padding: 10px 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; text-align: left; }
-.items-table thead th:not(:first-child) { text-align: center; }
-.items-table thead th:last-child { text-align: right; }
-.items-table tbody tr { border-bottom: 1px solid #e2e8f0; }
-.items-table tbody tr:nth-child(even) { background: #fafafa; }
-.items-table tbody td { padding: 10px 12px; font-size: 13px; color: #2d3748; text-align: left; }
-.items-table tbody td:not(:first-child) { text-align: center; font-variant-numeric: tabular-nums; }
-.items-table tbody td:last-child { text-align: right; }
-.totals-wrap { display: flex; justify-content: flex-end; margin-top: 10px; }
-.totals { width: 320px; }
-.total-row { display: flex; justify-content: space-between; padding: 6px 12px; font-size: 13px; color: #4a5568; border-bottom: 1px solid #e2e8f0; }
-.total-row:last-child { border-bottom: none; }
-.total-row.final { background: #1a2a3a; color: #fff; font-weight: 700; font-size: 14px; margin-top: 6px; letter-spacing: 0.02em; }
-.total-row span:last-child { font-variant-numeric: tabular-nums; }
-.footer-note { margin-top: 40px; font-size: 11px; color: #6b7a8d; line-height: 1.6; text-align: center; }
-.footer-note strong { color: #1a2a3a; }
-</style>
-</head>
-<body>
-<button class="print-btn" onclick="window.print()">🖨️ Skriv ut / Lagre som PDF</button>
-<div class="faktura">
-  <div class="header">
-    <div class="logo-block">
-      <svg width="240" height="110" viewBox="0 0 320 150" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block; margin-bottom: 10px;">
-        <rect width="320" height="150" rx="15" fill="#12253a"/>
-        <g transform="translate(0, 0)">
-          <rect x="25" y="45" width="18" height="50" rx="9" fill="#ffffff"/>
-          <rect x="47" y="30" width="18" height="60" rx="9" fill="#ffffff"/>
-          <rect x="69" y="20" width="18" height="70" rx="9" fill="#ffffff"/>
-          <rect x="91" y="30" width="18" height="60" rx="9" fill="#ffffff"/>
-          <path d="M 25 80 V 95 H 40 V 110 H 125 A 15 15 0 0 0 140 95 A 15 15 0 0 0 125 80 Z" fill="#ffffff"/>
-        </g>
-        <g transform="translate(130, 25)" stroke="#00d18b" stroke-width="4" stroke-linecap="round">
-          <line x1="12" y1="0" x2="12" y2="24"/>
-          <line x1="0" y1="12" x2="24" y2="12"/>
-          <line x1="4" y1="4" x2="20" y2="20"/>
-          <line x1="4" y1="20" x2="20" y2="4"/>
-        </g>
-        <text x="135" y="75" font-family="'Inter', sans-serif" font-size="40" font-weight="900" fill="#ffffff" letter-spacing="3">EKSTRA</text>
-        <text x="150" y="108" font-family="'Inter', sans-serif" font-size="36" font-weight="900" fill="#12253a" stroke="#00d18b" stroke-width="2" letter-spacing="4">HÅND</text>
-        <line x1="85" y1="125" x2="295" y2="125" stroke="#00d18b" stroke-width="4" stroke-linecap="round"/>
-        <text x="190" y="142" font-family="'Inter', sans-serif" font-size="10" font-weight="700" fill="#94a3b8" letter-spacing="1.5" text-anchor="middle">Hytteservice &amp; IT-løsninger</text>
-      </svg>
-      <div style="font-size:12px;color:#4a5568;line-height:1.5;">
-        Guvågveien 1, 8475 Straumsjøen<br>
-        Org.nr: 827 511 242 MVA | Tlf: 96 99 76 03
-      </div>
-    </div>
-    <div class="faktura-title">
-      <h1>Faktura</h1>
-      <div class="faktura-meta">
-        <strong>Fakturanr:</strong> ${fakturaNum}<br>
-        <strong>Dato:</strong> ${isoToNO(fakturaDate)}<br>
-        <strong>Forfall:</strong> ${isoToNO(dueDate)}
-      </div>
-    </div>
-  </div>
-
-  <hr class="divider">
-
-  <div class="address-row">
-    <div class="address-box">
-      <h3>Kunde / Mottaker</h3>
-      <p>
-        <strong>Thomas Nygård</strong><br>
-        Hovden Hytteservice<br>
-        Nygårdsveien 63, 8475 Straumsjøen<br>
-        Bø i Vesterålen, Norge
-      </p>
-    </div>
-    <div class="address-box">
-      <h3>Betalingsinformasjon</h3>
-      <p>
-        <span class="highlight">Bank:</span> Sparebanken Nord-Norge<br>
-        <span class="highlight">Kontonummer:</span> 4612.61.52078<br>
-        <span class="highlight">Merk betaling:</span> Fakturanr. ${fakturaNum}
-      </p>
-    </div>
-  </div>
-
-  <table class="items-table">
-    <thead>
-      <tr>
-        <th>Beskrivelse</th>
-        <th>Gjester</th>
-        <th>Sats (kr)</th>
-        <th>Sum (Eks. MVA)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${tableRows}
-      ${utleggRows}
-    </tbody>
-  </table>
-
-  <div class="totals-wrap">
-    <div class="totals">
-      <div class="total-row">
-        <span>Sum tjenester eks. mva:</span>
-        <span>${formatKr(sumServices)} kr</span>
-      </div>
-      <div class="total-row">
-        <span>MVA (25%):</span>
-        <span>${formatKr(mva)} kr</span>
-      </div>
-      ${
-        sumUtlegg > 0
-          ? `<div class="total-row">
-        <span>Utlegg (ingen mva):</span>
-        <span>${formatKr(sumUtlegg)} kr</span>
-      </div>`
-          : ""
-      }
-      <div class="total-row final">
-        <span>TOTALT Å BETALE:</span>
-        <span>${formatKr(total)} kr</span>
-      </div>
-    </div>
-  </div>
-
-  <div class="footer-note">
-    Tusen takk for oppdraget!<br>
-    <strong>Jovita Amurwon | Ekstrahånd</strong><br>
-    Guvågveien 1, 8475 Straumsjøen | Tlf: 96 99 76 03 | Org.nr: 827 511 242 MVA
-  </div>
-</div>
-</body>
-</html>`;
-};
-
 const StatusBadge = ({ status }) => {
   if (!status) return <span style={styles.badgeNone}>Ikke rapportert</span>;
   if (status === "ok") return <span style={styles.badgeOk}>✓ Alt bra</span>;
   if (status === "obs") return <span style={styles.badgeObs}>⚠ Obs</span>;
   return null;
 };
+
+// status_reports can hold up to two rows per booking: one sent on arrival (phase "arrival"),
+// one sent when cleaning is finished (phase "done"). Older rows have no phase — treat them as "done".
+const findReport = (reports, phase) =>
+  (reports || []).find((r) => (r.phase || "done") === phase) || null;
+
+// Badge on the list/detail header shows the most advanced status: done > arrival > none.
+const overallReport = (reports) =>
+  findReport(reports, "done") || findReport(reports, "arrival") || null;
 
 const SupplyBadge = ({ status }) => {
   if (status === "ok") return <span style={styles.badgeOk}>✓ OK</span>;
@@ -321,6 +119,18 @@ const Logo = () => (
     <text x="100" y="84" fontFamily="Helvetica,Arial,sans-serif" fontSize="7" fontWeight="500" fill="#fff" textAnchor="middle" letterSpacing="1.5">Hytteservice &amp; IT-løsninger</text>
   </svg>
 );
+
+// Public VAPID key for push notifications (safe to expose — it's the public half of the key pair)
+const VAPID_PUBLIC_KEY = "BKmk243WmrUjeSZYvg5X-d5Ov48NVEpsYwy-ufAXf8P3JGdrO90K99I3o2J8Sq2sx2NF8J39RwII1UoSSiKTHm4";
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) outputArray[i] = rawData.charCodeAt(i);
+  return outputArray;
+}
 
 const emptyNewBooking = {
   guest: "",
@@ -352,63 +162,109 @@ export default function App() {
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [newBookingError, setNewBookingError] = useState("");
+  const [pushStatus, setPushStatus] = useState("unknown"); // unknown | busy | enabled | denied | unsupported
+  const [checked, setChecked] = useState({}); // cleaning checklist ticks for the selected booking
 
-  // ── FAKTURA STATE ──────────────────────────────────────────────────────────
-  const [fakturaNum, setFakturaNum] = useState("047");
-  const [fakturaDate, setFakturaDate] = useState(todayISO());
-  // { [bookingId]: { included: bool, ekstraTimer: number, ekstraNote: string } }
-  const [fakturaBookings, setFakturaBookings] = useState({});
-  const [utleggItems, setUtleggItems] = useState([{ name: "", amount: "" }]);
+  // Load saved ticks for the selected booking (kept on this device only)
+  useEffect(() => {
+    if (!selected) { setChecked({}); return; }
+    try {
+      const raw = localStorage.getItem(`checklist-${selected}`);
+      setChecked(raw ? JSON.parse(raw) : {});
+    } catch (e) {
+      setChecked({});
+    }
+  }, [selected]);
 
-  const setFakturaBookingField = (id, field, value) => {
-    setFakturaBookings((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], [field]: value },
-    }));
+  const toggleCheck = (id) => {
+    setChecked((prev) => {
+      const next = { ...prev, [id]: !prev[id] };
+      try { localStorage.setItem(`checklist-${selected}`, JSON.stringify(next)); } catch (e) { /* ignore */ }
+      return next;
+    });
+  };
+  const checkedCount = () => CHECKLIST_ITEMS.filter((it) => checked[it.id]).length;
+  const clearChecklist = () => {
+    setChecked({});
+    try { localStorage.removeItem(`checklist-${selected}`); } catch (e) { /* ignore */ }
+  };
+  const checklistSummary = () => {
+    const missing = CHECKLIST_ITEMS.filter((it) => !checked[it.id]);
+    const base = `Sjekkliste: ${CHECKLIST_ITEMS.length - missing.length}/${CHECKLIST_ITEMS.length} ✓`;
+    return missing.length ? `${base}\nIkke avkrysset: ${missing.map((m) => m.label).join("; ")}` : base;
+  };
+  // Soft gate: warn about unticked items, but let Jovita send anyway
+  const confirmChecklist = () => {
+    const missing = CHECKLIST_ITEMS.filter((it) => !checked[it.id]);
+    if (!missing.length) return true;
+    return window.confirm(
+      `Du har ikke krysset av ${missing.length} punkt:\n\n• ${missing.map((m) => m.label).join("\n• ")}\n\nSende likevel?`
+    );
   };
 
-  const openFaktura = () => {
-    const dueDate = addDays(fakturaDate, 14);
+  const checkPushStatus = async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      return;
+    }
+    if (Notification.permission === "denied") {
+      setPushStatus("denied");
+      return;
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      setPushStatus(sub ? "enabled" : "unknown");
+    } catch {
+      setPushStatus("unknown");
+    }
+  };
 
-    // Build service items
-    const serviceItems = [];
-    bookings.forEach((b) => {
-      if (!fakturaBookings[b.id]?.included) return;
-      const rate = guestRate(b.guests);
-      serviceItems.push({
-        desc: `Vask og klargjøring – ${b.guest} (${isoToLong(b.check_out)}), ${b.guests} gjester`,
-        guests: String(b.guests),
-        rate: "–",
-        sum: rate,
-      });
-      const timer = parseFloat(fakturaBookings[b.id]?.ekstraTimer) || 0;
-      if (timer > 0) {
-        const note = fakturaBookings[b.id]?.ekstraNote
-          ? ` – ${fakturaBookings[b.id].ekstraNote}`
-          : "";
-        serviceItems.push({
-          desc: `Ekstraarbeid${note} (${isoToLong(b.check_out)}, ${timer} t × 550 kr)`,
-          guests: "–",
-          rate: "550,00",
-          sum: timer * 550,
+  // Ask for permission and subscribe this phone/browser to push notifications for the logged-in role
+  const enablePush = async () => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      setPushStatus("unsupported");
+      showToast("⚠️ Varsler støttes ikke i denne nettleseren");
+      return;
+    }
+    setPushStatus("busy");
+    try {
+      const permission = await Notification.requestPermission();
+      if (permission !== "granted") {
+        setPushStatus("denied");
+        showToast("🔕 Du avslo varsler");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
         });
       }
-    });
-
-    const validUtlegg = utleggItems.filter((u) => u.name && parseFloat(u.amount) > 0);
-
-    const html = generateFakturaHTML({
-      fakturaNum,
-      fakturaDate,
-      dueDate,
-      serviceItems,
-      utleggItems: validUtlegg,
-    });
-
-    const win = window.open("", "_blank");
-    win.document.write(html);
-    win.document.close();
+      const json = sub.toJSON();
+      await supabase.from("push_subscriptions").upsert(
+        {
+          role: user.role,
+          endpoint: json.endpoint,
+          p256dh: json.keys.p256dh,
+          auth: json.keys.auth,
+        },
+        { onConflict: "endpoint" }
+      );
+      setPushStatus("enabled");
+      showToast("🔔 Varsler skrudd på!");
+    } catch (err) {
+      console.error("push subscribe error:", err);
+      setPushStatus("unknown");
+      showToast("⚠️ Klarte ikke å skru på varsler");
+    }
   };
+
+  useEffect(() => {
+    if (user) checkPushStatus();
+  }, [user]);
 
   const handleLogin = (role) => {
     const u = USERS[role];
@@ -429,6 +285,7 @@ export default function App() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  // Load bookings from Supabase — includes related bed_plans and status_reports
   const loadBookings = async () => {
     setLoading(true);
     const { data: bData, error } = await supabase
@@ -440,6 +297,7 @@ export default function App() {
     setLoading(false);
   };
 
+  // Load supplies from Supabase
   const loadSupplies = async () => {
     const { data: sData } = await supabase
       .from("supplies")
@@ -455,6 +313,7 @@ export default function App() {
     }
   }, [user]);
 
+  // Realtime subscription
   useEffect(() => {
     if (!user) return;
     const channel = supabase
@@ -482,6 +341,7 @@ export default function App() {
     });
   };
 
+  // Upload the selected status-report photo to Supabase Storage, return its public URL
   const uploadStatusPhoto = async () => {
     if (!statusPhoto) return null;
     const ext = statusPhoto.name.split(".").pop();
@@ -495,7 +355,12 @@ export default function App() {
     return data.publicUrl;
   };
 
-  const notifySupplyEmpty = async (item) => {
+  // Notified for both "low" and "empty" — these are the states that shouldn't get missed.
+  const notifySupplyStatus = async (item, newStatus) => {
+    const message =
+      newStatus === "empty"
+        ? `${item.name} er tom og trenger påfyll.`
+        : `${item.name} er i ferd med å bli tom — lite igjen.`;
     await fetch("/api/send-notification", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -504,7 +369,7 @@ export default function App() {
         guest: "",
         checkIn: "",
         checkOut: "",
-        message: `${item.name} er tom og trenger påfyll.`,
+        message,
       }),
     });
   };
@@ -545,57 +410,53 @@ export default function App() {
     setLoading(false);
   };
 
-  const startCleaning = async () => {
-    setLoading(true);
-    await supabase
-      .from("bookings")
-      .update({ cleaning_started_at: new Date().toISOString() })
-      .eq("id", booking.id);
-    showToast("▶️ Vask startet!");
-    loadBookings();
-    setLoading(false);
-  };
-
   const computeDurationMinutes = () => {
     if (!booking?.cleaning_started_at) return null;
     const started = new Date(booking.cleaning_started_at).getTime();
     return Math.max(1, Math.round((Date.now() - started) / 60000));
   };
 
-  const submitStatus = async () => {
+  // Sent on arrival, before cleaning begins — documents status (with optional photo),
+  // and starts the cleaning clock at the same time.
+  const submitArrivalReport = async () => {
     setLoading(true);
-    const duration = computeDurationMinutes();
     const photoUrl = await uploadStatusPhoto();
+    const now = new Date().toISOString();
     await supabase.from("status_reports").insert({
       booking_id: selected,
+      phase: "arrival",
       status: statusType,
       note: statusNote,
-      sent_at: new Date().toISOString(),
-      duration_minutes: duration,
+      sent_at: now,
       photo_url: photoUrl,
     });
-    const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
+    await supabase.from("bookings").update({ cleaning_started_at: now }).eq("id", selected);
     await sendNotification(
-      "status_report",
+      "arrival_report",
       booking,
-      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}${durationText}`,
+      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}`,
       photoUrl
     );
     setStatusNote("");
     setStatusPhoto(null);
-    showToast("📤 Status sendt til Thomas!");
+    setStatusType("ok");
+    showToast("📍 Ankomststatus sendt — vask startet!");
     loadBookings();
     setLoading(false);
   };
 
-  const quickCleanDone = async () => {
+  // Sent when cleaning is finished (with optional comment/photo)
+  const submitDoneReport = async () => {
+    if (!confirmChecklist()) return;
     setLoading(true);
     const duration = computeDurationMinutes();
     const photoUrl = await uploadStatusPhoto();
+    const checklistText = checklistSummary();
     await supabase.from("status_reports").insert({
       booking_id: selected,
-      status: "ok",
-      note: "Vasket ferdig ✓",
+      phase: "done",
+      status: statusType,
+      note: statusNote ? `${statusNote}\n${checklistText}` : checklistText,
       sent_at: new Date().toISOString(),
       duration_minutes: duration,
       photo_url: photoUrl,
@@ -604,9 +465,42 @@ export default function App() {
     await sendNotification(
       "status_report",
       booking,
-      `✓ Hytta er vasket ferdig!${durationText}`,
+      `${statusType === "ok" ? "✓ Alt bra" : "⚠ Obs"}: ${statusNote || "Ingen kommentar"}${durationText}\n${checklistText}`,
       photoUrl
     );
+    clearChecklist();
+    setStatusNote("");
+    setStatusPhoto(null);
+    setStatusType("ok");
+    showToast("📤 Ferdigrapport sendt til Thomas!");
+    loadBookings();
+    setLoading(false);
+  };
+
+  // Quick one-tap "Vask ferdig!" — sends an "ok" done-report immediately, no form needed
+  const quickCleanDone = async () => {
+    if (!confirmChecklist()) return;
+    setLoading(true);
+    const duration = computeDurationMinutes();
+    const photoUrl = await uploadStatusPhoto();
+    const checklistText = checklistSummary();
+    await supabase.from("status_reports").insert({
+      booking_id: selected,
+      phase: "done",
+      status: "ok",
+      note: `Vasket ferdig ✓\n${checklistText}`,
+      sent_at: new Date().toISOString(),
+      duration_minutes: duration,
+      photo_url: photoUrl,
+    });
+    const durationText = duration ? ` (Tidsbruk: ${formatDuration(duration)})` : "";
+    await sendNotification(
+      "status_report",
+      booking,
+      `✓ Hytta er vasket ferdig!${durationText}\n${checklistText}`,
+      photoUrl
+    );
+    clearChecklist();
     setStatusPhoto(null);
     showToast(`🧹 Vask ferdig sendt til Thomas!${duration ? ` (${formatDuration(duration)})` : ""}`);
     loadBookings();
@@ -615,14 +509,15 @@ export default function App() {
 
   const cycleSupply = async (item) => {
     const newStatus = nextSupplyStatus(item.status);
+    // optimistic update
     setSupplies((prev) => prev.map((s) => (s.id === item.id ? { ...s, status: newStatus } : s)));
     await supabase
       .from("supplies")
       .update({ status: newStatus, updated_at: new Date().toISOString(), updated_by: user.name })
       .eq("id", item.id);
-    if (newStatus === "empty") {
-      await notifySupplyEmpty(item);
-      showToast(`✕ ${item.name} markert som tom — Thomas varslet!`);
+    if (newStatus === "empty" || newStatus === "low") {
+      await notifySupplyStatus(item, newStatus);
+      showToast(`${newStatus === "empty" ? "✕" : "⚠"} ${item.name} → ${SUPPLY_LABEL[newStatus]} — Thomas varslet!`);
     } else {
       showToast(`Oppdatert: ${item.name} → ${SUPPLY_LABEL[newStatus]}`);
     }
@@ -902,226 +797,12 @@ export default function App() {
     );
   }
 
-  // ── FAKTURA VIEW (host only) ────────────────────────────────────────────────
-  if (view === "faktura" && user.role === "host") {
-    const selectedBkgs = bookings.filter((b) => fakturaBookings[b.id]?.included);
-    let previewSumServices = 0;
-    selectedBkgs.forEach((b) => {
-      previewSumServices += guestRate(b.guests);
-      const timer = parseFloat(fakturaBookings[b.id]?.ekstraTimer) || 0;
-      previewSumServices += timer * 550;
-    });
-    const validUtlegg = utleggItems.filter((u) => u.name && parseFloat(u.amount) > 0);
-    const previewSumUtlegg = validUtlegg.reduce((s, u) => s + parseFloat(u.amount), 0);
-    const previewMva = previewSumServices * 0.25;
-    const previewTotal = previewSumServices + previewMva + previewSumUtlegg;
-    const dueDate = addDays(fakturaDate, 14);
-    const anySelected = selectedBkgs.length > 0;
-
-    return (
-      <div style={styles.wrap}>
-        {toast && <div style={{ ...styles.toast, background: toast.type === "success" ? "#00d68f" : "#fc8181" }}>{toast.msg}</div>}
-        <header style={styles.header}>
-          <button style={styles.back} onClick={() => setView("list")}>← Tilbake</button>
-          <span style={styles.headerName}>{user.name}</span>
-          <button style={styles.logout} onClick={() => { setUser(null); setView("list"); }}>Logg ut</button>
-        </header>
-
-        <div style={{ ...styles.listWrap, maxWidth: 520 }}>
-          <div style={styles.listTitle}>🧾 Generer faktura</div>
-
-          {/* ── Fakturadetaljer ── */}
-          <div style={styles.section}>
-            <div style={styles.sectionTitle}>Fakturadetaljer</div>
-            <div style={{ display: "flex", gap: 12 }}>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label}>Fakturanr</label>
-                <input style={styles.input} type="text" value={fakturaNum}
-                  onChange={e => setFakturaNum(e.target.value)} />
-              </div>
-              <div style={{ flex: 2 }}>
-                <label style={styles.label}>Fakturadato</label>
-                <input style={styles.input} type="date" value={fakturaDate}
-                  onChange={e => setFakturaDate(e.target.value)} />
-              </div>
-            </div>
-            <p style={{ fontSize: 12, color: "#718096", margin: "-4px 0 0" }}>
-              Forfall: {isoToNO(dueDate)} (14 dager)
-            </p>
-          </div>
-
-          {/* ── Velg bookinger ── */}
-          <div style={styles.section}>
-            <div style={styles.sectionTitle}>Velg bookinger å fakturere</div>
-            {bookings.length === 0 && (
-              <p style={{ fontSize: 13, color: "#718096" }}>Ingen bookinger funnet.</p>
-            )}
-            {bookings.map((b) => {
-              const included = !!fakturaBookings[b.id]?.included;
-              const rate = guestRate(b.guests);
-              return (
-                <div key={b.id} style={{
-                  border: `1px solid ${included ? "#0f2540" : "#e2e8f0"}`,
-                  borderRadius: 10,
-                  padding: "10px 12px",
-                  marginBottom: 8,
-                  background: included ? "#f0f4f8" : "#fff",
-                }}>
-                  <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
-                    <input
-                      type="checkbox"
-                      checked={included}
-                      onChange={e => setFakturaBookingField(b.id, "included", e.target.checked)}
-                      style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }}
-                    />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: "#1a202c" }}>
-                        {b.guest}
-                      </div>
-                      <div style={{ fontSize: 12, color: "#4a5568" }}>
-                        Utsjekk {formatDate(b.check_out)} · {b.guests} gjester
-                      </div>
-                      <div style={{ fontSize: 12, color: "#00a06f", fontWeight: 600, marginTop: 2 }}>
-                        {rate.toLocaleString("nb-NO")} kr (eks. mva)
-                      </div>
-                    </div>
-                  </label>
-
-                  {included && (
-                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #e2e8f0" }}>
-                      <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ ...styles.label, fontSize: 11 }}>Ekstraarbeid (timer)</label>
-                          <input
-                            style={{ ...styles.input, marginBottom: 0 }}
-                            type="number"
-                            min="0"
-                            step="0.5"
-                            placeholder="0"
-                            value={fakturaBookings[b.id]?.ekstraTimer || ""}
-                            onChange={e => setFakturaBookingField(b.id, "ekstraTimer", e.target.value)}
-                          />
-                        </div>
-                        <div style={{ flex: 2 }}>
-                          <label style={{ ...styles.label, fontSize: 11 }}>Hva ble gjort?</label>
-                          <input
-                            style={{ ...styles.input, marginBottom: 0 }}
-                            type="text"
-                            placeholder="F.eks. klargjøring utover ordinær vask"
-                            value={fakturaBookings[b.id]?.ekstraNote || ""}
-                            onChange={e => setFakturaBookingField(b.id, "ekstraNote", e.target.value)}
-                          />
-                        </div>
-                      </div>
-                      {(parseFloat(fakturaBookings[b.id]?.ekstraTimer) || 0) > 0 && (
-                        <div style={{ fontSize: 11, color: "#718096", marginTop: 4 }}>
-                          + {((parseFloat(fakturaBookings[b.id]?.ekstraTimer) || 0) * 550).toLocaleString("nb-NO")} kr ekstraarbeid
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          {/* ── Utlegg ── */}
-          <div style={styles.section}>
-            <div style={styles.sectionTitle}>Utlegg (ingen MVA)</div>
-            {utleggItems.map((u, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, alignItems: "center" }}>
-                <input
-                  style={{ ...styles.input, flex: 2, marginBottom: 0 }}
-                  type="text"
-                  placeholder="Hva (f.eks. dusjsåpe)"
-                  value={u.name}
-                  onChange={e => {
-                    const next = [...utleggItems];
-                    next[i] = { ...next[i], name: e.target.value };
-                    setUtleggItems(next);
-                  }}
-                />
-                <input
-                  style={{ ...styles.input, flex: 1, marginBottom: 0 }}
-                  type="number"
-                  min="0"
-                  placeholder="kr"
-                  value={u.amount}
-                  onChange={e => {
-                    const next = [...utleggItems];
-                    next[i] = { ...next[i], amount: e.target.value };
-                    setUtleggItems(next);
-                  }}
-                />
-                {utleggItems.length > 1 && (
-                  <button
-                    style={{ background: "#fed7d7", border: "none", borderRadius: 6, padding: "8px 10px", cursor: "pointer", fontSize: 14, color: "#822727", flexShrink: 0 }}
-                    onClick={() => setUtleggItems(utleggItems.filter((_, j) => j !== i))}
-                  >×</button>
-                )}
-              </div>
-            ))}
-            <button
-              style={{ ...styles.btnEdit, marginTop: 4, fontSize: 13, padding: "8px 0" }}
-              onClick={() => setUtleggItems([...utleggItems, { name: "", amount: "" }])}
-            >
-              + Legg til utlegg
-            </button>
-          </div>
-
-          {/* ── Totalsum ── */}
-          {anySelected && (
-            <div style={{ ...styles.section, background: "#0f2540", color: "#fff" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
-                <span>Sum tjenester eks. mva</span>
-                <span>{formatKr(previewSumServices)} kr</span>
-              </div>
-              <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
-                <span>MVA (25%)</span>
-                <span>{formatKr(previewMva)} kr</span>
-              </div>
-              {previewSumUtlegg > 0 && (
-                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6, fontSize: 13 }}>
-                  <span>Utlegg (ingen mva)</span>
-                  <span>{formatKr(previewSumUtlegg)} kr</span>
-                </div>
-              )}
-              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 700, borderTop: "1px solid #ffffff44", paddingTop: 8, marginTop: 4 }}>
-                <span>TOTALT Å BETALE</span>
-                <span>{formatKr(previewTotal)} kr</span>
-              </div>
-            </div>
-          )}
-
-          <button
-            style={{
-              ...styles.btnSave,
-              background: anySelected ? "#00d68f" : "#e2e8f0",
-              color: anySelected ? "#0f2540" : "#a0aec0",
-              fontSize: 16,
-              padding: "16px 0",
-              marginTop: 4,
-              cursor: anySelected ? "pointer" : "not-allowed",
-            }}
-            onClick={openFaktura}
-            disabled={!anySelected}
-          >
-            🧾 Forhåndsvis og skriv ut faktura
-          </button>
-          {!anySelected && (
-            <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", marginTop: 8 }}>
-              Velg minst én booking for å generere faktura
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }
-
   // DETAIL VIEW
   if (view === "detail" && booking) {
     const bp = booking.bed_plans?.[0] || {};
-    const sr = booking.status_reports?.[0];
+    const arrivalReport = findReport(booking.status_reports, "arrival");
+    const doneReport = findReport(booking.status_reports, "done");
+    const sr = overallReport(booking.status_reports);
 
     return (
       <div style={styles.wrap}>
@@ -1215,34 +896,15 @@ export default function App() {
             </>
           )}
 
+          {/* Status for cleaner */}
           {user.role === "cleaner" && (
             <div style={styles.section}>
-              <div style={styles.sectionTitle}>📋 Statusrapport etter utsjekk</div>
-              {sr ? (
-                <div style={styles.statusDone}>
-                  <StatusBadge status={sr.status} />
-                  <div style={styles.statusNote}>{sr.note}</div>
-                  {sr.photo_url && (
-                    <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
-                  )}
-                  {sr.duration_minutes != null && (
-                    <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
-                  )}
-                  <div style={styles.statusTime}>Sendt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
-                </div>
-              ) : !booking.cleaning_started_at ? (
+              {/* Phase 1: not arrived yet — send arrival status, which also starts the clock */}
+              {!arrivalReport && (
                 <>
+                  <div style={styles.sectionTitle}>📍 Statusrapport ved ankomst</div>
                   <p style={{ fontSize: 13, color: "#718096", marginTop: -4, marginBottom: 14 }}>
-                    Trykk når du faktisk begynner å vaske — det gir riktig tidsbruk.
-                  </p>
-                  <button style={styles.btnQuickDone} onClick={startCleaning} disabled={loading}>
-                    {loading ? "Starter..." : "▶️ Start vask"}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
-                    ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
+                    Send status (og bilde ved behov) når du ankommer. Dette starter også vaskeklokken.
                   </p>
                   <div style={styles.radioRow}>
                     <label style={styles.radioLabel}>
@@ -1263,8 +925,73 @@ export default function App() {
                       ✓ {statusPhoto.name} valgt
                     </p>
                   )}
-                  <button style={styles.btnSend} onClick={submitStatus} disabled={loading}>
-                    {loading ? "Sender..." : "📤 Send status til Thomas"}
+                  <button style={styles.btnSend} onClick={submitArrivalReport} disabled={loading}>
+                    {loading ? "Sender..." : "📍 Send ankomststatus og start vask"}
+                  </button>
+                </>
+              )}
+
+              {/* Arrival report already sent — show it */}
+              {arrivalReport && (
+                <>
+                  <div style={styles.sectionTitle}>📍 Status ved ankomst</div>
+                  <div style={styles.statusDone}>
+                    <StatusBadge status={arrivalReport.status} />
+                    <div style={styles.statusNote}>{arrivalReport.note}</div>
+                    {arrivalReport.photo_url && (
+                      <img src={arrivalReport.photo_url} alt="Bilde fra ankomst" style={styles.reportPhoto} />
+                    )}
+                    <div style={styles.statusTime}>Sendt: {new Date(arrivalReport.sent_at).toLocaleString("no-NO")}</div>
+                  </div>
+                </>
+              )}
+
+              {/* Phase 2: arrived, cleaning in progress — send the finished report */}
+              {arrivalReport && !doneReport && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={styles.sectionTitle}>🧹 Vask pågår</div>
+                  <p style={{ fontSize: 12, color: "#a0aec0", marginTop: -4, marginBottom: 12 }}>
+                    ⏱ Vask startet: {new Date(booking.cleaning_started_at).toLocaleTimeString("no-NO", { hour: "2-digit", minute: "2-digit" })}
+                  </p>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#0f2540", marginBottom: 2 }}>
+                    ✅ Sjekkliste ({checkedCount()}/{CHECKLIST_ITEMS.length})
+                  </div>
+                  {CHECKLIST.map((g) => (
+                    <div key={g.group}>
+                      <div style={styles.checkGroup}>{g.group}</div>
+                      {g.items.map((it) => (
+                        <label key={it.id} style={styles.checkRow}>
+                          <input type="checkbox" style={styles.checkBox}
+                            checked={!!checked[it.id]} onChange={() => toggleCheck(it.id)} />
+                          <span style={{ textDecoration: checked[it.id] ? "line-through" : "none", opacity: checked[it.id] ? 0.55 : 1 }}>
+                            {it.label}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                  <div style={{ ...styles.checkGroup, marginTop: 20 }}>Rapport</div>
+                  <div style={styles.radioRow}>
+                    <label style={styles.radioLabel}>
+                      <input type="radio" name="status" value="ok" checked={statusType === "ok"} onChange={() => setStatusType("ok")} /> Alt bra
+                    </label>
+                    <label style={styles.radioLabel}>
+                      <input type="radio" name="status" value="obs" checked={statusType === "obs"} onChange={() => setStatusType("obs")} /> Obs / Avvik
+                    </label>
+                  </div>
+                  <textarea style={{ ...styles.input, height: 80 }}
+                    placeholder={statusType === "ok" ? "Valgfri kommentar..." : "Beskriv avviket..."}
+                    value={statusNote} onChange={e => setStatusNote(e.target.value)} />
+                  <label style={styles.label}>📷 Bilde (valgfritt)</label>
+                  <input style={styles.input} type="file" accept="image/*" capture="environment"
+                    onChange={e => setStatusPhoto(e.target.files?.[0] || null)} />
+                  {statusPhoto && (
+                    <p style={{ fontSize: 12, color: "#00a06f", marginTop: -6, marginBottom: 10 }}>
+                      ✓ {statusPhoto.name} valgt
+                    </p>
+                  )}
+                  <button style={styles.btnSend} onClick={submitDoneReport} disabled={loading}>
+                    {loading ? "Sender..." : "📤 Send ferdigrapport til Thomas"}
                   </button>
                   <p style={{ fontSize: 12, color: "#a0aec0", textAlign: "center", margin: "16px 0 8px" }}>
                     eller
@@ -1272,24 +999,57 @@ export default function App() {
                   <button style={styles.btnQuickDone} onClick={quickCleanDone} disabled={loading}>
                     {loading ? "Sender..." : "🧹 Vask ferdig!"}
                   </button>
-                </>
+                </div>
+              )}
+
+              {/* Phase 3: done */}
+              {doneReport && (
+                <div style={{ marginTop: 20 }}>
+                  <div style={styles.sectionTitle}>✅ Ferdigrapport</div>
+                  <div style={styles.statusDone}>
+                    <StatusBadge status={doneReport.status} />
+                    <div style={{ ...styles.statusNote, whiteSpace: "pre-wrap" }}>{doneReport.note}</div>
+                    {doneReport.photo_url && (
+                      <img src={doneReport.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                    )}
+                    {doneReport.duration_minutes != null && (
+                      <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(doneReport.duration_minutes)}</div>
+                    )}
+                    <div style={styles.statusTime}>Sendt: {new Date(doneReport.sent_at).toLocaleString("no-NO")}</div>
+                  </div>
+                </div>
               )}
             </div>
           )}
 
-          {user.role === "host" && sr && (
+          {/* Status for host */}
+          {user.role === "host" && arrivalReport && (
             <div style={styles.section}>
-              <div style={styles.sectionTitle}>📋 Status fra Jovita</div>
+              <div style={styles.sectionTitle}>📍 Ankomststatus fra Jovita</div>
               <div style={styles.statusDone}>
-                <StatusBadge status={sr.status} />
-                <div style={styles.statusNote}>{sr.note}</div>
-                {sr.photo_url && (
-                  <img src={sr.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
+                <StatusBadge status={arrivalReport.status} />
+                <div style={styles.statusNote}>{arrivalReport.note}</div>
+                {arrivalReport.photo_url && (
+                  <img src={arrivalReport.photo_url} alt="Bilde fra ankomst" style={styles.reportPhoto} />
                 )}
-                {sr.duration_minutes != null && (
-                  <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(sr.duration_minutes)}</div>
+                <div style={styles.statusTime}>Mottatt: {new Date(arrivalReport.sent_at).toLocaleString("no-NO")}</div>
+              </div>
+            </div>
+          )}
+
+          {user.role === "host" && doneReport && (
+            <div style={styles.section}>
+              <div style={styles.sectionTitle}>✅ Ferdigrapport fra Jovita</div>
+              <div style={styles.statusDone}>
+                <StatusBadge status={doneReport.status} />
+                <div style={{ ...styles.statusNote, whiteSpace: "pre-wrap" }}>{doneReport.note}</div>
+                {doneReport.photo_url && (
+                  <img src={doneReport.photo_url} alt="Bilde fra rapport" style={styles.reportPhoto} />
                 )}
-                <div style={styles.statusTime}>Mottatt: {new Date(sr.sent_at).toLocaleString("no-NO")}</div>
+                {doneReport.duration_minutes != null && (
+                  <div style={styles.statusTime}>⏱ Tidsbruk: {formatDuration(doneReport.duration_minutes)}</div>
+                )}
+                <div style={styles.statusTime}>Mottatt: {new Date(doneReport.sent_at).toLocaleString("no-NO")}</div>
               </div>
             </div>
           )}
@@ -1308,11 +1068,24 @@ export default function App() {
           {user.role === "host" && (
             <button style={styles.newBookingBtn} onClick={() => setView("newBooking")}>➕ Ny booking</button>
           )}
-          {user.role === "host" && (
-            <button style={styles.fakturaBtn} onClick={() => setView("faktura")}>🧾 Faktura</button>
-          )}
           <button style={styles.suppliesBtn} onClick={() => setView("supplies")}>🧴 Forsyninger</button>
           <button style={styles.suppliesBtn} onClick={() => setView("stats")}>📊 Statistikk</button>
+          {pushStatus !== "unsupported" && pushStatus !== "enabled" && (
+            <button
+              style={styles.suppliesBtn}
+              disabled={pushStatus === "busy"}
+              onClick={
+                pushStatus === "denied"
+                  ? () => showToast("🔕 Varsler er blokkert — skru på i nettleserens innstillinger for denne siden")
+                  : enablePush
+              }
+            >
+              {pushStatus === "busy" ? "..." : pushStatus === "denied" ? "🔕 Varsler blokkert" : "🔔 Skru på varsler"}
+            </button>
+          )}
+          {pushStatus === "enabled" && (
+            <span style={{ fontSize: 13, color: "#00d68f" }}>🔔 Varsler på</span>
+          )}
           <span style={styles.headerName}>{user.name}</span>
           <button style={styles.logout} onClick={() => setUser(null)}>Logg ut</button>
         </div>
@@ -1328,13 +1101,13 @@ export default function App() {
           </div>
         )}
         {bookings.map((b) => {
-          const sr = b.status_reports?.[0];
+          const sr = overallReport(b.status_reports);
           return (
             <div key={b.id} style={styles.card} onClick={() => { setSelected(b.id); setView("detail"); }}>
               <div style={styles.cardLeft}>
                 <div style={styles.cardGuest}>{b.guest}</div>
                 <div style={styles.cardDates}>{formatDate(b.check_in)} → {formatDate(b.check_out)}{b.country ? ` · ${b.country}` : ""}</div>
-                <div style={styles.cardMeta}>👥 {b.guests} gjester · {guestRate(b.guests).toLocaleString("nb-NO")} kr</div>
+                <div style={styles.cardMeta}>👥 {b.guests} gjester</div>
                 {b.obs && <div style={styles.cardObs}>⚠️ Har OBS</div>}
               </div>
               <div style={styles.cardRight}>
@@ -1359,7 +1132,6 @@ const styles = {
   back: { background: "none", border: "none", color: "#00d68f", fontSize: 14, cursor: "pointer", padding: 0 },
   logout: { background: "none", border: "1px solid #ffffff44", color: "#fff", fontSize: 12, borderRadius: 6, padding: "4px 10px", cursor: "pointer" },
   suppliesBtn: { background: "#00d68f22", border: "1px solid #00d68f", color: "#00d68f", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 600 },
-  fakturaBtn: { background: "#00d68f44", border: "1px solid #00d68f", color: "#fff", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 700 },
   newBookingBtn: { background: "#00d68f", border: "1px solid #00d68f", color: "#0f2540", fontSize: 12, borderRadius: 6, padding: "5px 10px", cursor: "pointer", fontWeight: 700 },
   loginWrap: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "100vh", background: "#f0f4f8" },
   loginBox: { background: "#fff", borderRadius: 16, padding: 36, textAlign: "center", boxShadow: "0 4px 24px #0002", display: "flex", flexDirection: "column", alignItems: "center", gap: 12, width: 280 },
@@ -1401,6 +1173,9 @@ const styles = {
   btnEdit: { width: "100%", padding: "12px 0", background: "#edf2f7", color: "#0f2540", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
   btnSend: { width: "100%", padding: "12px 0", background: "#00d68f", color: "#0f2540", border: "none", borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: "pointer", marginTop: 4 },
   btnQuickDone: { width: "100%", padding: "16px 0", background: "#0f2540", color: "#fff", border: "none", borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: "pointer" },
+  checkGroup: { fontSize: 12, fontWeight: 700, color: "#0f2540", textTransform: "uppercase", letterSpacing: 0.5, margin: "12px 0 4px" },
+  checkRow: { display: "flex", alignItems: "flex-start", gap: 10, padding: "8px 0", fontSize: 14, color: "#2d3748", cursor: "pointer", lineHeight: 1.4 },
+  checkBox: { width: 20, height: 20, marginTop: 1, flexShrink: 0 },
   radioRow: { display: "flex", gap: 20, marginBottom: 12 },
   radioLabel: { fontSize: 14, display: "flex", alignItems: "center", gap: 6, cursor: "pointer" },
   statusDone: { background: "#f0fff4", borderRadius: 10, padding: 14 },
